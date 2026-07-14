@@ -1,0 +1,15 @@
+# Built binary
+claude-monitor
+Claude Monitor.app/Contents/MacOS/claude-monitor
+
+# Code signature
+Claude Monitor.app/Contents/_CodeSignature/
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
