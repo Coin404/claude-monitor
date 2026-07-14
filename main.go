@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -37,12 +38,16 @@ func main() {
 		StatusBlocked: GenerateCircleIcon(colorYellow),
 	}
 
-	WriteHooks()
+	if err := WriteHooks(); err != nil {
+		fmt.Fprintf(os.Stderr, "claude-monitor: failed to write hooks: %v\n", err)
+	}
 
 	systray.Run(onReady, onExit)
 }
 
 func onReady() {
+	rewriteItem := systray.AddMenuItem("Re-write Hooks", "重新写入 Claude Code hooks 配置")
+	systray.AddSeparator()
 	quitItem := systray.AddMenuItem("Quit", "退出 Claude Monitor")
 
 	currentStatus := StatusStopped
@@ -53,6 +58,14 @@ func onReady() {
 	go func() {
 		<-sigCh
 		systray.Quit()
+	}()
+
+	go func() {
+		for range rewriteItem.ClickedCh {
+			if err := WriteHooks(); err != nil {
+				fmt.Fprintf(os.Stderr, "claude-monitor: failed to re-write hooks: %v\n", err)
+			}
+		}
 	}()
 
 	go func() {
@@ -90,9 +103,9 @@ func detectStatus() Status {
 	case "green":
 		return StatusActive
 	case "yellow":
-		return StatusBlocked
-	case "red":
 		return StatusWaiting
+	case "red":
+		return StatusBlocked
 	default:
 		return StatusWaiting
 	}
