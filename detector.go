@@ -14,7 +14,7 @@ type ProcessInfo struct {
 	Name string
 }
 
-const busyFile = "/tmp/claude-busy"
+const doneFile = "/tmp/claude-done"
 const questionFile = "/tmp/claude-question"
 
 // CheckClaudeProcess checks if any claude process is running (excluding self).
@@ -60,10 +60,16 @@ func CheckClaudeProcess() (*ProcessInfo, error) {
 	return nil, nil
 }
 
-// IsBusy checks the heartbeat file written by claude during response streaming.
-func IsBusy() bool {
-	_, err := os.Stat(busyFile)
-	return err == nil
+// IsDone checks if claude just finished a response (done file was touched recently).
+// Returns true if claude is IDLE (just finished, waiting for user).
+func IsDone() bool {
+	info, err := os.Stat(doneFile)
+	if err != nil {
+		// File doesn't exist → claude is working
+		return false
+	}
+	// File was touched within the last second → just finished → idle
+	return time.Since(info.ModTime()) < time.Second
 }
 
 // IsQuestion checks if claude asked a question and is waiting for user answer.

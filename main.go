@@ -94,21 +94,17 @@ func detectStatus() Status {
 		return StatusStopped
 	}
 
-	// Permission dialog blocks progress → yellow
 	if HasDialogWindow() {
 		return StatusBlocked
 	}
 
-	// I asked a question, waiting for user response → yellow
 	if IsQuestion() {
 		return StatusBlocked
 	}
 
-	// Busy file exists → I'm working → green
-	if IsBusy() {
-		return StatusActive
+	if IsDone() {
+		return StatusWaiting
 	}
 
-	// Claude running but idle, waiting for next prompt → red
-	return StatusWaiting
+	return StatusActive
 }
