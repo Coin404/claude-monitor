@@ -19,8 +19,8 @@ const (
 )
 
 const (
-	pollInterval   = 1 * time.Second
-	debounceRounds = 1
+	pollInterval   = 20 * time.Millisecond
+	debounceRounds = 0
 )
 
 const (
