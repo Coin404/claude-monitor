@@ -18,10 +18,7 @@ const (
 	StatusBlocked
 )
 
-const (
-	pollInterval   = 250 * time.Millisecond
-	debounceRounds = 1
-)
+const pollInterval = 250 * time.Millisecond
 
 const (
 	colorGreen  = "#34C759"
@@ -39,6 +36,8 @@ func main() {
 		StatusWaiting: GenerateCircleIcon(colorRed),
 		StatusBlocked: GenerateCircleIcon(colorYellow),
 	}
+
+	WriteHooks()
 
 	systray.Run(onReady, onExit)
 }
@@ -62,24 +61,13 @@ func onReady() {
 	}()
 
 	go func() {
-		pendingStatus := currentStatus
-		pendingCount := 0
-
 		ticker := time.NewTicker(pollInterval)
 		defer ticker.Stop()
 
 		for range ticker.C {
-			detectedStatus := detectStatus()
-
-			if detectedStatus == pendingStatus {
-				pendingCount++
-			} else {
-				pendingStatus = detectedStatus
-				pendingCount = 1
-			}
-
-			if pendingCount >= debounceRounds && pendingStatus != currentStatus {
-				currentStatus = pendingStatus
+			detected := detectStatus()
+			if detected != currentStatus {
+				currentStatus = detected
 				systray.SetIcon(statusIcons[currentStatus])
 			}
 		}
@@ -89,8 +77,8 @@ func onReady() {
 func onExit() {}
 
 func detectStatus() Status {
-	proc, err := CheckClaudeProcess()
-	if err != nil || proc == nil {
+	running, _ := CheckClaudeProcess()
+	if !running {
 		return StatusStopped
 	}
 
@@ -98,13 +86,14 @@ func detectStatus() Status {
 		return StatusBlocked
 	}
 
-	if IsQuestion() {
-		return StatusBlocked
-	}
-
-	if proc.IsActive() {
+	switch ReadHookState() {
+	case "green":
 		return StatusActive
+	case "yellow":
+		return StatusBlocked
+	case "red":
+		return StatusWaiting
+	default:
+		return StatusWaiting
 	}
-
-	return StatusWaiting
 }
