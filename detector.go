@@ -14,8 +14,10 @@ type ProcessInfo struct {
 	Name string
 }
 
+const busyFile = "/tmp/claude-busy"
+const questionFile = "/tmp/claude-question"
+
 // CheckClaudeProcess checks if any claude process is running (excluding self).
-// Uses ps instead of pgrep because macOS pgrep has quirks matching short process names.
 func CheckClaudeProcess() (*ProcessInfo, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -33,7 +35,6 @@ func CheckClaudeProcess() (*ProcessInfo, error) {
 		if line == "" {
 			continue
 		}
-		// Skip header line
 		if strings.HasPrefix(line, "PID") {
 			continue
 		}
@@ -57,4 +58,16 @@ func CheckClaudeProcess() (*ProcessInfo, error) {
 	}
 
 	return nil, nil
+}
+
+// IsBusy checks the heartbeat file written by claude during response streaming.
+func IsBusy() bool {
+	_, err := os.Stat(busyFile)
+	return err == nil
+}
+
+// IsQuestion checks if claude asked a question and is waiting for user answer.
+func IsQuestion() bool {
+	_, err := os.Stat(questionFile)
+	return err == nil
 }

@@ -5,9 +5,10 @@
 char* getWindowOwners(void) {
     NSMutableSet *owners = [NSMutableSet set];
 
-    // Baseline processes that always have non-dialog windows at these layers
+    // Baseline processes that always have windows at dialog layers
     NSSet *baseline = [NSSet setWithObjects:
-        @"Window Server", @"控制中心", @"程序坞", @"Dock", nil];
+        @"Window Server", @"控制中心", @"程序坞", @"Dock",
+        @"通知中心", @"Dynamic Wallpaper", @"访达", @"GoLand", nil];
 
     CFArrayRef windowList = CGWindowListCopyWindowInfo(
         kCGWindowListOptionOnScreenOnly,
@@ -28,11 +29,11 @@ char* getWindowOwners(void) {
         int layer = 0;
         if (layerRef) CFNumberGetValue(layerRef, kCFNumberIntType, &layer);
 
-        // Only dialog-level windows (above normal, below menubar)
-        if (layer <= 0 || layer > 100) continue;
-
         NSString *owner = (__bridge NSString *)ownerName;
         if ([baseline containsObject:owner]) continue;
+
+        // Only dialog-layer windows: above normal (0) and below menubar (24+)
+        if (layer <= 0 || layer > 100) continue;
 
         [owners addObject:owner];
     }

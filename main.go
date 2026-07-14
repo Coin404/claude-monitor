@@ -13,8 +13,9 @@ type Status int
 
 const (
 	StatusStopped Status = iota
-	StatusRunning
-	StatusPermissionNeeded
+	StatusActive
+	StatusWaiting
+	StatusBlocked
 )
 
 const (
@@ -25,6 +26,7 @@ const (
 const (
 	colorGreen  = "#34C759"
 	colorGray   = "#8E8E93"
+	colorRed    = "#FF3B30"
 	colorYellow = "#FFCC00"
 )
 
@@ -32,9 +34,10 @@ var statusIcons map[Status][]byte
 
 func main() {
 	statusIcons = map[Status][]byte{
-		StatusStopped:          GenerateCircleIcon(colorGray),
-		StatusRunning:          GenerateCircleIcon(colorGreen),
-		StatusPermissionNeeded: GenerateCircleIcon(colorYellow),
+		StatusStopped: GenerateCircleIcon(colorGray),
+		StatusActive:  GenerateCircleIcon(colorGreen),
+		StatusWaiting: GenerateCircleIcon(colorRed),
+		StatusBlocked: GenerateCircleIcon(colorYellow),
 	}
 
 	systray.Run(onReady, onExit)
@@ -91,9 +94,21 @@ func detectStatus() Status {
 		return StatusStopped
 	}
 
+	// Permission dialog blocks progress → yellow
 	if HasDialogWindow() {
-		return StatusPermissionNeeded
+		return StatusBlocked
 	}
 
-	return StatusRunning
+	// I asked a question, waiting for user response → yellow
+	if IsQuestion() {
+		return StatusBlocked
+	}
+
+	// Busy file exists → I'm working → green
+	if IsBusy() {
+		return StatusActive
+	}
+
+	// Claude running but idle, waiting for next prompt → red
+	return StatusWaiting
 }
