@@ -19,8 +19,8 @@ const (
 )
 
 const (
-	pollInterval   = 20 * time.Millisecond
-	debounceRounds = 0
+	pollInterval   = 250 * time.Millisecond
+	debounceRounds = 1
 )
 
 const (
@@ -102,9 +102,9 @@ func detectStatus() Status {
 		return StatusBlocked
 	}
 
-	if IsDone() {
-		return StatusWaiting
+	if proc.IsActive() {
+		return StatusActive
 	}
 
-	return StatusActive
+	return StatusWaiting
 }

@@ -14,8 +14,12 @@ type ProcessInfo struct {
 	Name string
 }
 
-const doneFile = "/tmp/claude-done"
 const questionFile = "/tmp/claude-question"
+
+// Track cumulative CPU time across polls
+var lastCPUTicks uint64
+var lastCheckPID int
+var lastActiveTime time.Time
 
 // CheckClaudeProcess checks if any claude process is running (excluding self).
 func CheckClaudeProcess() (*ProcessInfo, error) {
@@ -60,16 +64,71 @@ func CheckClaudeProcess() (*ProcessInfo, error) {
 	return nil, nil
 }
 
-// IsDone checks if claude just finished a response (done file was touched recently).
-// Returns true if claude is IDLE (just finished, waiting for user).
-func IsDone() bool {
-	info, err := os.Stat(doneFile)
+// getCPUTicks returns cumulative CPU time in ticks (hundredths of a second).
+func getCPUTicks(pid int) (uint64, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// ps -o time gives cumulative CPU time as mm:ss.hh
+	cmd := exec.CommandContext(ctx, "ps", "-o", "time", "-p", strconv.Itoa(pid))
+	out, err := cmd.Output()
 	if err != nil {
-		// File doesn't exist → claude is working
+		return 0, err
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) < 2 {
+		return 0, nil
+	}
+	cpuTime := strings.TrimSpace(lines[1])
+
+	// Parse mm:ss.hh or mm:ss
+	parts := strings.Split(cpuTime, ":")
+	if len(parts) < 2 {
+		return 0, nil
+	}
+
+	minutes, _ := strconv.ParseUint(parts[0], 10, 64)
+
+	secParts := strings.Split(parts[1], ".")
+	seconds, _ := strconv.ParseUint(secParts[0], 10, 64)
+	hundredths := uint64(0)
+	if len(secParts) > 1 {
+		hundredths, _ = strconv.ParseUint(secParts[1], 10, 64)
+	}
+
+	return minutes*60*100 + seconds*100 + hundredths, nil
+}
+
+// IsActive returns true if the process has consumed CPU time recently.
+func (p *ProcessInfo) IsActive() bool {
+	ticks, err := getCPUTicks(p.PID)
+	if err != nil || ticks == 0 {
 		return false
 	}
-	// File was touched within the last second → just finished → idle
-	return time.Since(info.ModTime()) < time.Second
+
+	// Reset tracking if PID changed (new claude process)
+	if p.PID != lastCheckPID {
+		lastCPUTicks = ticks
+		lastCheckPID = p.PID
+		lastActiveTime = time.Time{}
+		return false
+	}
+
+	if ticks > lastCPUTicks {
+		lastCPUTicks = ticks
+		lastActiveTime = time.Now()
+		return true
+	}
+
+	lastCPUTicks = ticks
+
+	// Cooldown: stay active for 2s after last CPU activity
+	if !lastActiveTime.IsZero() && time.Since(lastActiveTime) < 2*time.Second {
+		return true
+	}
+
+	return false
 }
 
 // IsQuestion checks if claude asked a question and is waiting for user answer.
