@@ -220,11 +220,10 @@ func CheckProxyActivity() bool {
 // of overwriting them, and only writes to disk if something actually
 // changed.
 //
-// Hook color semantics (5-state model):
+// Hook color semantics:
 //
 //	UserPromptSubmit          → yellow (用户提交 prompt)
-//	SessionStart              → orange (开始输出/思考)
-//	PreToolUse (all tools)    → blue   (执行工具中)
+//	SessionStart              → orange (开始输出)
 //	PreToolUse (AskUserQuestion) → red  (需要用户操作)
 //	Stop                      → green  (完成，等待用户)
 func WriteHooks() error {
@@ -298,10 +297,9 @@ func writeHooksTo(settingsPath string) error {
 		return "echo " + color + " > " + stateFile
 	}
 
-	// New hook entries with 5-color semantics.
-	// PreToolUse has two entries: one without matcher (blue, executing tools)
-	// and one with matcher="AskUserQuestion" (red, needs user input).
-	// When AskUserQuestion fires, both run — red writes last, taking priority.
+	// New hook entries matching traffic-light's hook model.
+	// PreToolUse only matches AskUserQuestion (red); normal tool execution
+	// does not change state — the previous color (orange/yellow) persists.
 	newHooks := map[string][]any{
 		"UserPromptSubmit": {map[string]any{
 			"hooks": []any{
@@ -319,25 +317,15 @@ func writeHooksTo(settingsPath string) error {
 				},
 			},
 		}},
-		"PreToolUse": {
-			map[string]any{
-				"hooks": []any{
-					map[string]any{
-						"type":    "command",
-						"command": cmd("blue"),
-					},
+		"PreToolUse": {map[string]any{
+			"matcher": "AskUserQuestion",
+			"hooks": []any{
+				map[string]any{
+					"type":    "command",
+					"command": cmd("red"),
 				},
 			},
-			map[string]any{
-				"matcher": "AskUserQuestion",
-				"hooks": []any{
-					map[string]any{
-						"type":    "command",
-						"command": cmd("red"),
-					},
-				},
-			},
-		},
+		}},
 		"Stop": {map[string]any{
 			"hooks": []any{
 				map[string]any{
