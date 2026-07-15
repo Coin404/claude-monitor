@@ -13,29 +13,35 @@ import (
 type Status int
 
 const (
-	StatusStopped Status = iota
-	StatusActive
-	StatusWaiting
-	StatusBlocked
+	StatusStopped   Status = iota // 灰 — Claude 未运行
+	StatusIdle                     // 绿 — 空闲，等待用户
+	StatusSubmitted                // 黄 — 用户刚提交 prompt
+	StatusWorking                  // 蓝 — 思考/生成中
+	StatusToolUse                  // 橙 — 执行工具中
+	StatusBlocked                  // 红 — 需要用户操作
 )
 
-const pollInterval = 250 * time.Millisecond
+const pollInterval = 50 * time.Millisecond
 
 const (
-	colorGreen  = "#34C759"
-	colorGray   = "#8E8E93"
-	colorRed    = "#FF3B30"
-	colorYellow = "#FFCC00"
+	colorGray    = "#8E8E93"
+	colorGreen   = "#34C759"
+	colorYellow  = "#FFCC00"
+	colorBlue    = "#007AFF"
+	colorOrange  = "#FF9500"
+	colorRed     = "#FF3B30"
 )
 
 var statusIcons map[Status][]byte
 
 func main() {
 	statusIcons = map[Status][]byte{
-		StatusStopped: GenerateCircleIcon(colorGray),
-		StatusActive:  GenerateCircleIcon(colorGreen),
-		StatusWaiting: GenerateCircleIcon(colorRed),
-		StatusBlocked: GenerateCircleIcon(colorYellow),
+		StatusStopped:   GenerateCircleIcon(colorGray),
+		StatusIdle:      GenerateCircleIcon(colorGreen),
+		StatusSubmitted: GenerateCircleIcon(colorYellow),
+		StatusWorking:   GenerateCircleIcon(colorBlue),
+		StatusToolUse:   GenerateCircleIcon(colorOrange),
+		StatusBlocked:   GenerateCircleIcon(colorRed),
 	}
 
 	if err := WriteHooks(); err != nil {
@@ -101,12 +107,16 @@ func detectStatus() Status {
 
 	switch ReadHookState() {
 	case "green":
-		return StatusActive
+		return StatusIdle
 	case "yellow":
-		return StatusWaiting
+		return StatusSubmitted
+	case "blue":
+		return StatusWorking
+	case "orange":
+		return StatusToolUse
 	case "red":
 		return StatusBlocked
 	default:
-		return StatusWaiting
+		return StatusIdle
 	}
 }

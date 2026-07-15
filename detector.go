@@ -39,12 +39,14 @@ func ReadHookState() string {
 // It merges with existing hooks instead of overwriting them, and only
 // writes to disk if something actually changed.
 //
-// Hook color semantics (aligned with claude-traffic-light conventions):
+// Hook color semantics (6-state model):
 //
-//	Start             → yellow (Claude begins output)
-//	UserPromptSubmit  → yellow (user submitted, about to begin)
-//	Stop              → green  (Claude finished, user can continue)
-//	PreToolUse+AskUserQuestion → red (needs user input)
+//	UserPromptSubmit          → yellow (用户提交 prompt)
+//	Start                     → blue   (开始输出/思考)
+//	PreToolUse (all tools)    → orange (执行工具中)
+//	PreToolUse (AskUserQuestion) → red  (需要用户操作)
+//	PostToolUse               → blue   (工具执行完，回到工作中)
+//	Stop                      → green  (完成，等待用户)
 func WriteHooks() error {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -77,7 +79,7 @@ func WriteHooks() error {
 
 	// Events managed by claude-monitor (including deprecated Elicitation
 	// from older versions, matching claude-traffic-light cleanup behavior).
-	managedEvents := []string{"Start", "Stop", "PreToolUse", "UserPromptSubmit", "Elicitation"}
+	managedEvents := []string{"Start", "Stop", "PreToolUse", "PostToolUse", "UserPromptSubmit", "Elicitation"}
 
 	// Remove old claude-monitor entries (containing stateFile path) from managed events
 	for _, event := range managedEvents {
@@ -106,27 +108,42 @@ func WriteHooks() error {
 		return "echo " + color + " > " + stateFile
 	}
 
-	// New hook entries with correct color semantics
+	// New hook entries with 6-color semantics.
+	// PreToolUse has two entries: one without matcher (orange, all tools)
+	// and one with matcher="AskUserQuestion" (red, needs user input).
+	// When AskUserQuestion fires, both run — red writes last, taking priority.
 	newHooks := map[string][]any{
-		"Start": {map[string]any{
-			"hooks": []any{
-				map[string]any{"type": "command", "command": cmd("yellow")},
-			},
-		}},
 		"UserPromptSubmit": {map[string]any{
 			"hooks": []any{
 				map[string]any{"type": "command", "command": cmd("yellow")},
 			},
 		}},
+		"Start": {map[string]any{
+			"hooks": []any{
+				map[string]any{"type": "command", "command": cmd("blue")},
+			},
+		}},
+		"PreToolUse": {
+			map[string]any{
+				"hooks": []any{
+					map[string]any{"type": "command", "command": cmd("orange")},
+				},
+			},
+			map[string]any{
+				"matcher": "AskUserQuestion",
+				"hooks": []any{
+					map[string]any{"type": "command", "command": cmd("red")},
+				},
+			},
+		},
+		"PostToolUse": {map[string]any{
+			"hooks": []any{
+				map[string]any{"type": "command", "command": cmd("blue")},
+			},
+		}},
 		"Stop": {map[string]any{
 			"hooks": []any{
 				map[string]any{"type": "command", "command": cmd("green")},
-			},
-		}},
-		"PreToolUse": {map[string]any{
-			"matcher": "AskUserQuestion",
-			"hooks": []any{
-				map[string]any{"type": "command", "command": cmd("red")},
 			},
 		}},
 	}

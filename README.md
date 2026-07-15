@@ -4,30 +4,33 @@ macOS 菜单栏指示灯，通过 Claude Code hooks 实时显示 Claude 工作�
 
 设计参考 [claude-traffic-light](https://github.com/TaylorSimery/claude-traffic-light)（Electron 版），使用 Go + systray 实现更轻量的原生菜单栏应用。
 
-## 状态定义
+## 状态定义（6 色）
 
-| 颜色 | 图标 | 状态常量 | 含义 | 触发条件 |
-|------|------|----------|------|----------|
-| 灰 `#8E8E93` | ● | `StatusStopped` | Claude 未启动 | `pgrep -f claude` 无结果 |
-| 绿 `#34C759` | ● | `StatusActive` | Claude 完成回复，等待用户下一条指令 | Stop hook → 写入 `green` |
-| 红 `#FF3B30` | ● | `StatusWaiting` | Claude 工作中（思考/输出中） | Start hook 或 UserPromptSubmit hook → 写入 `yellow` |
-| 黄 `#FFCC00` | ● | `StatusBlocked` | 需要用户操作 | PreToolUse(AskUserQuestion) hook → 写入 `red`，或 CGWindow 检测到权限弹窗 |
+| 状态 | 图标色 | 含义 | Hook 触发 |
+|------|--------|------|-----------|
+| Stopped | 灰 `#8E8E93` | Claude 未运行 | pgrep 无结果 |
+| Idle | 绿 `#34C759` | 空闲，等待用户 | Stop |
+| Submitted | 黄 `#FFCC00` | 用户刚提交 prompt | UserPromptSubmit |
+| Working | 蓝 `#007AFF` | 思考/生成中 | Start, PostToolUse |
+| ToolUse | 橙 `#FF9500` | 执行工具中 | PreToolUse (所有工具) |
+| Blocked | 红 `#FF3B30` | 需要用户操作 | PreToolUse(AskUserQuestion) 或权限弹窗 |
 
-> **注意**：图标颜色与 hook 写入的颜色关键字并非一一对应，中间经过 `detectStatus()` 映射层。这是为了保持 `Status` 枚举语义清晰（"活跃/等待/阻塞"），同时 hook 写入的颜色遵循 traffic-light 惯例（绿=你可以继续 / 红=需要你操作 / 黄=工作中）。
+颜色直接映射：hook 写入什么颜色 → 图标显示什么颜色，无中间转换层。
 
-## 与 claude-traffic-light 的对齐
+## Hook 设计（6 个事件）
 
-两个项目使用**完全相同的颜色语义和 hook 事件映射**，可互相替换：
+```
+UserPromptSubmit          → echo yellow  > stateFile  (用户提交)
+Start                     → echo blue    > stateFile  (开始输出)
+PreToolUse (所有工具)      → echo orange  > stateFile  (执行工具)
+PreToolUse (AskUserQuestion) → echo red   > stateFile  (需要用户输入)
+PostToolUse               → echo blue    > stateFile  (工具执行完，回到工作中)
+Stop                      → echo green   > stateFile  (完成)
+```
 
-| 事件 | 写入颜色 | claude-traffic-light | claude-monitor |
-|------|---------|----------------------|----------------|
-| Start | `yellow` | ✓ | ✓ |
-| UserPromptSubmit | `yellow` | ✓ | ✓ |
-| Stop | `green` | ✓ | ✓ |
-| PreToolUse + AskUserQuestion | `red` | ✓ | ✓ |
-| Elicitation（清理） | — | ✓ | ✓ |
+PreToolUse 有两条 entry：一条无 matcher（匹配所有工具），一条有 matcher="AskUserQuestion"。AskUserQuestion 触发时两者都会执行，最终文件内容是 red（后写入覆盖）。
 
-区别在于架构选择：
+## 与 claude-traffic-light 的对比
 
 | 维度 | claude-traffic-light | claude-monitor |
 |------|---------------------|----------------|
@@ -38,7 +41,8 @@ macOS 菜单栏指示灯，通过 Claude Code hooks 实时显示 Claude 工作�
 | 双模式 | 三灯 / 单灯切换 | 仅单灯 |
 | 主题 | 深色 / 浅色 | 跟随系统菜单栏 |
 | 更新机制 | 远程 update.json 检查 | 手动构建 |
-| 状态轮询 | 300ms | 250ms |
+| 状态轮询 | 300ms | 50ms |
+| 颜色数 | 3 | 6 |
 
 ## 架构总览
 
@@ -47,21 +51,23 @@ macOS 菜单栏指示灯，通过 Claude Code hooks 实时显示 Claude 工作�
 │                  Claude Code                      │
 │                                                    │
 │  lifecycle events:                                 │
-│    Start ─────────────────────┐                    │
-│    UserPromptSubmit ──────────┤                    │
-│    Stop ──────────────────────┤                    │
-│    PreToolUse(AskUserQuestion) ┤                    │
-│                               │                    │
-│  ~/.claude/settings.json      │                    │
-│    hooks.command =            │                    │
-│    "echo <color> > <stateFile>"                    │
-└───────────────────────────────┼────────────────────┘
-                                │ write
-                                ▼
-                   /tmp/claude-monitor-state
-                                │
-                                │ read (250ms poll)
-                                ▼
+│    UserPromptSubmit ─────────────┤                 │
+│    Start ────────────────────────┤                 │
+│    PreToolUse ───────────────────┤                 │
+│    PreToolUse(AskUserQuestion) ──┤                 │
+│    PostToolUse ──────────────────┤                 │
+│    Stop ─────────────────────────┤                 │
+│                                  │                 │
+│  ~/.claude/settings.json         │                 │
+│    hooks.command =               │                 │
+│    "echo <color> > <stateFile>"  │                 │
+└──────────────────────────────────┼─────────────────┘
+                                   │ write
+                                   ▼
+                      /tmp/claude-monitor-state
+                                   │
+                                   │ read (50ms poll)
+                                   ▼
 ┌──────────────────────────────────────────────────┐
 │               claude-monitor (Go)                 │
 │                                                    │
@@ -97,7 +103,7 @@ macOS 菜单栏指示灯，通过 Claude Code hooks 实时显示 Claude 工作�
 `WriteHooks()` 采用**合并而非覆写**策略，完全参考 claude-traffic-light 的 `setupClaudeHooks()` 实现：
 
 1. 读取现有 `~/.claude/settings.json`
-2. 在 5 个受管事件（Start、Stop、PreToolUse、UserPromptSubmit、Elicitation）中，通过内容匹配识别包含 `/tmp/claude-monitor-state` 路径的旧条目并移除
+2. 在 6 个受管事件（Start、Stop、PreToolUse、PostToolUse、UserPromptSubmit、Elicitation）中，通过内容匹配识别包含 `/tmp/claude-monitor-state` 路径的旧条目并移除
 3. 追加新的 hook 条目
 4. 仅当有变更时才写回磁盘（`changed` flag）
 5. 返回 error，由调用方决定如何处理
@@ -108,10 +114,12 @@ macOS 菜单栏指示灯，通过 Claude Code hooks 实时显示 Claude 工作�
 
 | 事件 | 写入颜色 | 触发时机 | 设计意图 |
 |------|---------|----------|----------|
-| `Start` | `yellow` | Claude 开始输出 response | 标记"工作中"，覆盖思考阶段 |
-| `UserPromptSubmit` | `yellow` | 用户提交 prompt 后立即触发 | 在 Start 之前提前标记"即将工作" |
-| `Stop` | `green` | Claude 完成回复 | traffic-light 惯例：绿色=用户可以继续 |
-| `PreToolUse` (matcher: `AskUserQuestion`) | `red` | Claude 需要向用户提问 | traffic-light 惯例：红色=需要用户操作 |
+| `UserPromptSubmit` | `yellow` | 用户提交 prompt 后立即触发 | 提前标记"已提交" |
+| `Start` | `blue` | Claude 开始输出 response | 标记"思考/生成中" |
+| `PreToolUse` | `orange` | 任何工具调用前 | 标记"执行工具中" |
+| `PreToolUse` (matcher: `AskUserQuestion`) | `red` | Claude 需要向用户提问 | 标记"需要用户操作" |
+| `PostToolUse` | `blue` | 工具执行完毕后 | 回到"思考/生成中" |
+| `Stop` | `green` | Claude 完成回复 | 标记"空闲，等待用户" |
 
 ### 旧条目清理机制
 
@@ -124,16 +132,6 @@ macOS 菜单栏指示灯，通过 Claude Code hooks 实时显示 Claude 工作�
 ```json
 {
   "hooks": {
-    "Start": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo yellow > /tmp/claude-monitor-state"
-          }
-        ]
-      }
-    ],
     "UserPromptSubmit": [
       {
         "hooks": [
@@ -144,23 +142,51 @@ macOS 菜单栏指示灯，通过 Claude Code hooks 实时显示 Claude 工作�
         ]
       }
     ],
-    "Stop": [
+    "Start": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "echo green > /tmp/claude-monitor-state"
+            "command": "echo blue > /tmp/claude-monitor-state"
           }
         ]
       }
     ],
     "PreToolUse": [
       {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo orange > /tmp/claude-monitor-state"
+          }
+        ]
+      },
+      {
         "matcher": "AskUserQuestion",
         "hooks": [
           {
             "type": "command",
             "command": "echo red > /tmp/claude-monitor-state"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo blue > /tmp/claude-monitor-state"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo green > /tmp/claude-monitor-state"
           }
         ]
       }
@@ -177,34 +203,36 @@ macOS 菜单栏指示灯，通过 Claude Code hooks 实时显示 Claude 工作�
 1. CheckClaudeProcess() == false  →  StatusStopped（灰）
    pgrep -f claude，排除自身 PID
 
-2. HasDialogWindow() == true     →  StatusBlocked（黄）
+2. HasDialogWindow() == true     →  StatusBlocked（红）
    CGWindow API 检测弹窗层窗口（layer 1-100）
 
 3. ReadHookState() 读取 /tmp/claude-monitor-state:
-   "green"  → StatusActive  （绿：等待用户下一条指令）
-   "yellow" → StatusWaiting （红：Claude 工作中）
-   "red"    → StatusBlocked（黄：需要用户操作）
-   default  → StatusWaiting （红：未知状态默认工作中）
+   "green"  → StatusIdle      （绿：等待用户下一条指令）
+   "yellow" → StatusSubmitted （黄：用户刚提交 prompt）
+   "blue"   → StatusWorking   （蓝：思考/生成中）
+   "orange" → StatusToolUse   （橙：执行工具中）
+   "red"    → StatusBlocked   （红：需要用户操作）
+   default  → StatusIdle      （绿：未知状态默认空闲）
 ```
 
 ## 菜单栏菜单
 
-- **Re-write Hooks**：手动重新写入 hooks 配置到 `~/.claude/settings.json`，用于 hooks 被误删或损坏后的恢复（对应 claude-traffic-light 的 "Re-write config"）
+- **Re-write Hooks**：手动重新写入 hooks 配置到 `~/.claude/settings.json`，用于 hooks 被误删或损坏后的恢复
 - **Quit**：退出应用
 
 ## 文件说明
 
 ### main.go — 入口 + 状态机 + systray UI
-- 定义 `Status` 枚举（Stopped/Active/Waiting/Blocked）和颜色常量
+- 定义 `Status` 枚举（Stopped/Idle/Submitted/Working/ToolUse/Blocked）和 6 个颜色常量
 - `main()`: 初始化状态→图标映射表，调用 `WriteHooks()` 写入 hooks，启动 systray
-- `onReady()`: 创建菜单项（Re-write Hooks、Quit），信号监听（SIGINT/SIGTERM），启动 250ms 轮询循环
+- `onReady()`: 创建菜单项（Re-write Hooks、Quit），信号监听（SIGINT/SIGTERM），启动 50ms 轮询循环
 - `detectStatus()`: 优先级级联判断进程→弹窗→hook 状态
 - `onExit()`: systray 退出回调（空实现）
 
 ### detector.go — 进程检测 + hooks 管理 + 状态文件
 - `CheckClaudeProcess()`: 通过 `pgrep -f claude` 检测进程，排除自身 PID
 - `ReadHookState()`: 读取 `/tmp/claude-monitor-state`，失败返回空字符串
-- `WriteHooks()`: 合并式安装 hooks 到 `~/.claude/settings.json`，带 `changed` flag 避免无效写入，清理 5 个受管事件（含 Elicitation），返回 error
+- `WriteHooks()`: 合并式安装 hooks 到 `~/.claude/settings.json`，带 `changed` flag 避免无效写入，清理 6 个受管事件（含 Elicitation），返回 error
 
 ### icon.go — 纯 Go 圆形图标生成
 - `GenerateCircleIcon(hexColor)`: 生成 32×32 PNG，带抗锯齿边缘
@@ -258,12 +286,13 @@ open "Claude Monitor.app"
 | v1 | Accessibility API + 窗口标题匹配 | 需要辅助功能权限；重签后权限失效；`activationPolicy` 过滤跳过 CLI 进程 |
 | v2 | CGWindow API + CPU 快照 | CPU 采样不准；思考阶段（无工具调用）无信号 |
 | v3 | 翻转文件协议 | 时序问题：回复结束后 1 秒才切换状态，存在误报窗口 |
-| v4 | **Claude Code hooks（当前）** | 依赖 Claude Code 的 hook 机制，hooks 不支持的事件无法感知 |
+| v4 | Claude Code hooks（3 色） | 无法区分"思考中"和"执行工具中" |
+| v5 | **Claude Code hooks（6 色，当前）** | 依赖 Claude Code 的 hook 机制 |
 
 ## 限制与已知问题
 
 1. **强依赖 Claude Code hooks**：如果 Claude Code 未运行或 hook 机制变更，指示灯将停留在灰色（Stopped）
-2. **状态文件无持久化**：`/tmp/claude-monitor-state` 在系统重启后清空，首次启动前颜色不确定（代码默认为空→StatusWaiting）
+2. **状态文件无持久化**：`/tmp/claude-monitor-state` 在系统重启后清空，首次启动前颜色不确定（代码默认为空→StatusIdle）
 3. **权限弹窗检测有限**：CGWindow 的 layer 过滤区间（1-100）是经验值，某些系统弹窗可能不在此范围
 4. **无 idle 超时检测**：如果 Claude 进程存在但长时间无活动，状态取决于最后一次 hook 写入的颜色
 5. **无重试机制**：`WriteHooks()` 写入失败仅输出 stderr，不阻塞启动
