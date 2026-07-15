@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -219,13 +220,12 @@ func CheckProxyActivity() bool {
 // of overwriting them, and only writes to disk if something actually
 // changed.
 //
-// Hook color semantics (6-state model):
+// Hook color semantics (5-state model):
 //
 //	UserPromptSubmit          → yellow (用户提交 prompt)
-//	Start                     → blue   (开始输出/思考)
-//	PreToolUse (all tools)    → orange (执行工具中)
+//	SessionStart              → orange (开始输出/思考)
+//	PreToolUse (all tools)    → blue   (执行工具中)
 //	PreToolUse (AskUserQuestion) → red  (需要用户操作)
-//	PostToolUse               → blue   (工具执行完，回到工作中)
 //	Stop                      → green  (完成，等待用户)
 func WriteHooks() error {
 	home, err := os.UserHomeDir()
@@ -269,7 +269,7 @@ func writeHooksTo(settingsPath string) error {
 
 	// Events managed by claude-monitor (including deprecated Elicitation
 	// from older versions, matching claude-traffic-light cleanup behavior).
-	managedEvents := []string{"Start", "Stop", "PreToolUse", "PostToolUse", "UserPromptSubmit", "Elicitation"}
+	managedEvents := []string{"SessionStart", "Stop", "PreToolUse", "UserPromptSubmit", "Elicitation"}
 
 	// Remove old claude-monitor entries (containing stateFile path) from managed events
 	for _, event := range managedEvents {
@@ -298,42 +298,52 @@ func writeHooksTo(settingsPath string) error {
 		return "echo " + color + " > " + stateFile
 	}
 
-	// New hook entries with 6-color semantics.
-	// PreToolUse has two entries: one without matcher (orange, all tools)
+	// New hook entries with 5-color semantics.
+	// PreToolUse has two entries: one without matcher (blue, executing tools)
 	// and one with matcher="AskUserQuestion" (red, needs user input).
 	// When AskUserQuestion fires, both run — red writes last, taking priority.
 	newHooks := map[string][]any{
 		"UserPromptSubmit": {map[string]any{
 			"hooks": []any{
-				map[string]any{"type": "command", "command": cmd("yellow")},
+				map[string]any{
+					"type":    "command",
+					"command": cmd("yellow"),
+				},
 			},
 		}},
-		"Start": {map[string]any{
+		"SessionStart": {map[string]any{
 			"hooks": []any{
-				map[string]any{"type": "command", "command": cmd("blue")},
+				map[string]any{
+					"type":    "command",
+					"command": cmd("orange"),
+				},
 			},
 		}},
 		"PreToolUse": {
 			map[string]any{
 				"hooks": []any{
-					map[string]any{"type": "command", "command": cmd("orange")},
+					map[string]any{
+						"type":    "command",
+						"command": cmd("blue"),
+					},
 				},
 			},
 			map[string]any{
 				"matcher": "AskUserQuestion",
 				"hooks": []any{
-					map[string]any{"type": "command", "command": cmd("red")},
+					map[string]any{
+						"type":    "command",
+						"command": cmd("red"),
+					},
 				},
 			},
 		},
-		"PostToolUse": {map[string]any{
-			"hooks": []any{
-				map[string]any{"type": "command", "command": cmd("blue")},
-			},
-		}},
 		"Stop": {map[string]any{
 			"hooks": []any{
-				map[string]any{"type": "command", "command": cmd("green")},
+				map[string]any{
+					"type":    "command",
+					"command": cmd("green"),
+				},
 			},
 		}},
 	}
@@ -351,10 +361,15 @@ func writeHooksTo(settingsPath string) error {
 
 	settings["hooks"] = existingHooks
 
-	out, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(settings); err != nil {
 		return fmt.Errorf("marshaling %s: %w", settingsPath, err)
 	}
+	// Encode adds a trailing newline; trim it for clean files
+	out := bytes.TrimRight(buf.Bytes(), "\n")
 	if err := os.WriteFile(settingsPath, out, 0644); err != nil {
 		return fmt.Errorf("writing %s: %w", settingsPath, err)
 	}

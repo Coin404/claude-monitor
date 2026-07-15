@@ -101,10 +101,6 @@ func detectStatus() Status {
 		return StatusStopped
 	}
 
-	if HasDialogWindow() {
-		return StatusBlocked
-	}
-
 	hookState, fresh := ReadHookState()
 	// If hooks aren't active (state file stale or empty), fall back to
 	// proxy activity detection + stdin check to distinguish states.
