@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
 
-const stateFile = "/tmp/claude-monitor-state"
+const stateFileBase = "/tmp/claude-monitor-state"
+const stateFilePattern = "/tmp/claude-monitor-state-*"
 
 var (
 	proxyHost = "127.0.0.1"
@@ -46,22 +48,51 @@ func CheckClaudeProcess() bool {
 	return false
 }
 
-// ReadHookState reads the state written by Claude Code hooks.
-// It returns the state string and whether the state is "fresh" (written
-// within the last 10 seconds). A stale state means hooks are likely not
-// active in the current session.
+// colorPriority maps hook colors to urgency (higher = more urgent).
+var colorPriority = map[string]int{
+	"red":    5,
+	"orange": 4,
+	"yellow": 3,
+	"blue":   2,
+	"green":  1,
+}
+
+// ReadHookState reads all per-session state files written by Claude Code
+// hooks. It returns the most urgent state across all active sessions, and
+// whether any state was fresh (written within the last 10 seconds).
 func ReadHookState() (state string, fresh bool) {
-	info, err := os.Stat(stateFile)
-	if err != nil {
+	files, err := filepath.Glob(stateFilePattern)
+	if err != nil || len(files) == 0 {
 		return "", false
 	}
-	data, err := os.ReadFile(stateFile)
-	if err != nil {
+
+	bestState := ""
+	bestPriority := 0
+
+	for _, f := range files {
+		info, err := os.Stat(f)
+		if err != nil {
+			continue
+		}
+		if time.Since(info.ModTime()) >= 10*time.Second {
+			continue
+		}
+		data, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		s := strings.TrimSpace(string(data))
+		p := colorPriority[s]
+		if p > bestPriority {
+			bestPriority = p
+			bestState = s
+		}
+	}
+
+	if bestPriority == 0 {
 		return "", false
 	}
-	state = strings.TrimSpace(string(data))
-	fresh = time.Since(info.ModTime()) < 10*time.Second
-	return state, fresh
+	return bestState, true
 }
 
 // CheckProxyActivity detects whether Claude Code has an active TCP
@@ -84,10 +115,11 @@ func CheckProxyActivity() bool {
 //
 // Hook color semantics:
 //
-//	UserPromptSubmit          → yellow (用户提交 prompt)
-//	SessionStart              → orange (开始输出)
-//	PreToolUse (AskUserQuestion) → red  (需要用户操作)
-//	Stop                      → green  (完成，等待用户)
+//	UserPromptSubmit              → yellow (用户提交 prompt)
+//	SessionStart                  → orange (开始输出)
+//	PreToolUse (AskUserQuestion)  → red    (需要用户回答)
+//	PermissionRequest             → red    (需要用户授权)
+//	Stop                          → green  (完成，等待用户)
 func WriteHooks() error {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -130,7 +162,7 @@ func writeHooksTo(settingsPath string) error {
 
 	// Events managed by claude-monitor (including deprecated Elicitation
 	// from older versions, matching claude-traffic-light cleanup behavior).
-	managedEvents := []string{"SessionStart", "Stop", "PreToolUse", "UserPromptSubmit", "Elicitation"}
+	managedEvents := []string{"SessionStart", "Stop", "PreToolUse", "UserPromptSubmit", "PermissionRequest", "Elicitation"}
 
 	// Remove old claude-monitor entries (containing stateFile path) from managed events
 	for _, event := range managedEvents {
@@ -141,7 +173,7 @@ func writeHooksTo(settingsPath string) error {
 		var filtered []any
 		for _, entry := range entries {
 			entryJSON, _ := json.Marshal(entry)
-			if !strings.Contains(string(entryJSON), stateFile) {
+			if !strings.Contains(string(entryJSON), stateFileBase) {
 				filtered = append(filtered, entry)
 			}
 		}
@@ -156,7 +188,7 @@ func writeHooksTo(settingsPath string) error {
 	}
 
 	cmd := func(color string) string {
-		return "echo " + color + " > " + stateFile
+		return "echo " + color + " > " + stateFileBase + "-$PPID"
 	}
 
 	// New hook entries matching traffic-light's hook model.
@@ -181,6 +213,14 @@ func writeHooksTo(settingsPath string) error {
 		}},
 		"PreToolUse": {map[string]any{
 			"matcher": "AskUserQuestion",
+			"hooks": []any{
+				map[string]any{
+					"type":    "command",
+					"command": cmd("red"),
+				},
+			},
+		}},
+		"PermissionRequest": {map[string]any{
 			"hooks": []any{
 				map[string]any{
 					"type":    "command",
