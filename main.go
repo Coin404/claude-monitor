@@ -21,7 +21,7 @@ const (
 	StatusBlocked                  // 红 — 需要用户操作
 )
 
-const pollInterval = 50 * time.Millisecond
+const pollInterval = 30 * time.Millisecond
 
 const (
 	colorGray    = "#8E8E93"
@@ -96,7 +96,7 @@ func onReady() {
 func onExit() {}
 
 func detectStatus() Status {
-	running, _ := CheckClaudeProcess()
+	running := CheckClaudeProcess()
 	if !running {
 		return StatusStopped
 	}

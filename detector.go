@@ -12,30 +12,62 @@ import (
 
 const stateFile = "/tmp/claude-monitor-state"
 
-// Proxy activity cache — lsof can be slow, so we cache the result briefly.
+// Cache TTL for heavy operations (pgrep, CGWindow, lsof).
+// These don't change sub-100ms, so caching reduces CPU and keeps the
+// fast path (ReadHookState) responsive.
+const heavyCheckTTL = 500 * time.Millisecond
+
+// Process check cache — avoids spawning pgrep on every poll tick.
 var (
-	proxyCheckMu     sync.Mutex
-	lastProxyCheck   time.Time
-	lastProxyActive  bool
-	proxyCheckTTL    = 500 * time.Millisecond
-	proxyHost        = "127.0.0.1"
-	proxyPort        = "15721"
+	processCheckMu    sync.Mutex
+	lastProcessCheck  time.Time
+	lastProcessResult bool
+)
+
+// Proxy activity cache — avoids spawning lsof on every poll tick.
+var (
+	proxyCheckMu    sync.Mutex
+	lastProxyCheck  time.Time
+	lastProxyActive bool
+	proxyHost       = "127.0.0.1"
+	proxyPort       = "15721"
+)
+
+// Dialog window cache — avoids CGWindow enumeration on every poll tick.
+var (
+	dialogCheckMu    sync.Mutex
+	lastDialogCheck  time.Time
+	lastDialogResult bool
 )
 
 // CheckClaudeProcess checks if any claude process is running (excluding self).
-func CheckClaudeProcess() (bool, error) {
+// Results are cached for heavyCheckTTL to avoid spawning pgrep on every poll.
+func CheckClaudeProcess() bool {
+	processCheckMu.Lock()
+	defer processCheckMu.Unlock()
+
+	if time.Since(lastProcessCheck) < heavyCheckTTL {
+		return lastProcessResult
+	}
+
 	data, err := exec.Command("pgrep", "-f", "claude").Output()
 	if err != nil {
-		return false, nil
+		lastProcessResult = false
+		lastProcessCheck = time.Now()
+		return false
 	}
 	selfPID := fmt.Sprint(os.Getpid())
+	running := false
 	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
 		pid := strings.TrimSpace(line)
 		if pid != "" && pid != selfPID {
-			return true, nil
+			running = true
+			break
 		}
 	}
-	return false, nil
+	lastProcessResult = running
+	lastProcessCheck = time.Now()
+	return running
 }
 
 // ReadHookState reads the state written by Claude Code hooks.
@@ -66,7 +98,7 @@ func CheckProxyActivity() bool {
 	proxyCheckMu.Lock()
 	defer proxyCheckMu.Unlock()
 
-	if time.Since(lastProxyCheck) < proxyCheckTTL {
+	if time.Since(lastProxyCheck) < heavyCheckTTL {
 		return lastProxyActive
 	}
 

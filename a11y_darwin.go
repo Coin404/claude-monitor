@@ -8,6 +8,7 @@ package main
 import "C"
 import (
 	"strings"
+	"time"
 	"unsafe"
 )
 
@@ -21,9 +22,17 @@ func GetWindowOwners() (string, error) {
 }
 
 func HasDialogWindow() bool {
-	owners, err := GetWindowOwners()
-	if err != nil || owners == "" {
-		return false
+	dialogCheckMu.Lock()
+	defer dialogCheckMu.Unlock()
+
+	if time.Since(lastDialogCheck) < heavyCheckTTL {
+		return lastDialogResult
 	}
-	return strings.TrimSpace(owners) != ""
+
+	owners, err := GetWindowOwners()
+	result := err == nil && owners != "" && strings.TrimSpace(owners) != ""
+
+	lastDialogCheck = time.Now()
+	lastDialogResult = result
+	return result
 }
