@@ -102,13 +102,39 @@ func ReadHookState() (state string, fresh bool) {
 	return state, fresh
 }
 
+// stdin check cache — avoids spawning ps+lsof on every poll tick.
+var (
+	stdinCheckMu    sync.Mutex
+	lastStdinCheck  time.Time
+	lastStdinResult bool
+)
+
 // CheckWaitingForInput detects whether any Claude Code process is likely
 // waiting for user input (e.g. AskUserQuestion). This is a fallback used
 // when hooks aren't active in the current session.
 //
 // Heuristic: a claude process whose stdin is a TTY and is in a sleeping
 // state (S) is likely blocked on a read waiting for user response.
+//
+// Results are cached for heavyCheckTTL.
 func CheckWaitingForInput() bool {
+	stdinCheckMu.Lock()
+	defer stdinCheckMu.Unlock()
+
+	if time.Since(lastStdinCheck) < heavyCheckTTL {
+		return lastStdinResult
+	}
+
+	result := checkClaudeWaitingForInput()
+
+	lastStdinCheck = time.Now()
+	lastStdinResult = result
+	return result
+}
+
+// checkClaudeWaitingForInput does the actual ps + lsof work.
+// Must be called with stdinCheckMu held.
+func checkClaudeWaitingForInput() bool {
 	// Find claude PIDs (exact comm match, not claude-monitor)
 	data, err := exec.Command("ps", "-eo", "pid,comm=").Output()
 	if err != nil {
@@ -155,11 +181,13 @@ func CheckWaitingForInput() bool {
 
 	return false
 }
+
+// CheckProxyActivity detects whether Claude Code has an active TCP
 // connection to the API proxy. This is used as a fallback when hooks
 // haven't taken effect yet (e.g. session started before hook installation).
 //
-// Results are cached for proxyCheckTTL to avoid spawning lsof on every
-// poll tick (50ms).
+// Results are cached for heavyCheckTTL to avoid spawning lsof on every
+// poll tick.
 func CheckProxyActivity() bool {
 	proxyCheckMu.Lock()
 	defer proxyCheckMu.Unlock()
