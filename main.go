@@ -322,6 +322,10 @@ func detectStatus() (Status, string) {
 				return StatusIdle, "hook: green"
 			case "blue":
 				return StatusWorking, "hook: blue"
+			case "yellow":
+				return StatusSubmitted, "hook: yellow"
+			case "orange":
+				return StatusToolUse, "hook: orange"
 			case "red":
 				return StatusBlocked, "hook: red"
 			default:
@@ -337,8 +341,8 @@ func detectStatus() (Status, string) {
 		return StatusStopped, "no claude process"
 	}
 
-	hookState, fresh := ReadHookState(runningPIDs)
-	if !fresh {
+	hookState, _ := ReadHookState(runningPIDs)
+	if hookState == "" {
 		return StatusIdle, "no hook state"
 	}
 
@@ -347,6 +351,10 @@ func detectStatus() (Status, string) {
 		return StatusIdle, "hook: green"
 	case "blue":
 		return StatusWorking, "hook: blue"
+	case "yellow":
+		return StatusSubmitted, "hook: yellow"
+	case "orange":
+		return StatusToolUse, "hook: orange"
 	case "red":
 		return StatusBlocked, "hook: red"
 	default:

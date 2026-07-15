@@ -55,6 +55,34 @@ func isProcessRunning(pid int) bool {
 	return err == nil
 }
 
+// CleanupStaleStateFiles removes state files belonging to dead processes,
+// plus the legacy state file without a PID suffix.
+func CleanupStaleStateFiles() {
+	// Remove legacy state file (without PID suffix) from older versions
+	os.Remove(stateFileBase)
+
+	// Collect running PIDs
+	running := make(map[int]bool)
+	for _, pid := range ListClaudeProcesses() {
+		running[pid] = true
+	}
+
+	files, err := filepath.Glob(stateFilePattern)
+	if err != nil {
+		return
+	}
+	for _, f := range files {
+		pidStr := strings.TrimPrefix(filepath.Base(f), "claude-monitor-state-")
+		pid, err := strconv.Atoi(pidStr)
+		if err != nil {
+			continue
+		}
+		if !running[pid] {
+			os.Remove(f)
+		}
+	}
+}
+
 // colorPriority maps hook colors to urgency (higher = more urgent).
 var colorPriority = map[string]int{
 	"red":    5,
@@ -106,8 +134,13 @@ func sessionColor(pid int) string {
 
 // ReadHookState reads all per-session state files written by Claude Code
 // hooks. It filters out files belonging to dead processes and returns the
-// most urgent state across all active sessions along with whether any
-// state was fresh (updated within 10 seconds).
+// most urgent state across all active sessions.
+//
+// Freshness: a state file is "fresh" if updated within 10 seconds. If all
+// state files are stale (>10s) but the processes are still running, the
+// most recent stale value is still used — no new hook means no state change.
+// The "fresh" flag indicates whether the returned state is from a recent
+// (<10s) update.
 func ReadHookState(runningPIDs []int) (state string, fresh bool) {
 	pidSet := make(map[int]bool, len(runningPIDs))
 	for _, pid := range runningPIDs {
@@ -121,6 +154,7 @@ func ReadHookState(runningPIDs []int) (state string, fresh bool) {
 
 	bestState := ""
 	bestPriority := 0
+	bestFresh := false
 
 	for _, f := range files {
 		base := filepath.Base(f)
@@ -137,9 +171,7 @@ func ReadHookState(runningPIDs []int) (state string, fresh bool) {
 		if err != nil {
 			continue
 		}
-		if time.Since(info.ModTime()) >= 10*time.Second {
-			continue
-		}
+		fileFresh := time.Since(info.ModTime()) < 10*time.Second
 		data, err := os.ReadFile(f)
 		if err != nil {
 			continue
@@ -149,13 +181,14 @@ func ReadHookState(runningPIDs []int) (state string, fresh bool) {
 		if p > bestPriority {
 			bestPriority = p
 			bestState = s
+			bestFresh = fileFresh
 		}
 	}
 
 	if bestPriority == 0 {
 		return "", false
 	}
-	return bestState, true
+	return bestState, bestFresh
 }
 
 // WriteHooks installs hooks into ~/.claude/settings.json and
@@ -168,10 +201,15 @@ func ReadHookState(runningPIDs []int) (state string, fresh bool) {
 //	SessionStart                  → green  (会话启动，空闲等待)
 //	UserPromptSubmit              → blue   (用户提交 prompt，开始思考)
 //	PreToolUse (AskUserQuestion)  → red    (需要用户回答)
-//	PostToolUse (AskUserQuestion) → blue   (回答完成，回到思考)
-//	PermissionRequest             → red    (需要用户授权)
+//	PostToolUse (AskUserQuestion) → blue   (回答完成，继续思考)
+//	PreToolUse (Bash)             → red    (需要用户授权命令)
+//	PostToolUse (Bash)            → blue   (授权完成，继续思考)
+//	PermissionRequest             → red    (系统权限弹窗)
 //	Stop                          → green  (完成，等待用户)
 func WriteHooks() error {
+	// Clean up stale state files from dead processes first
+	CleanupStaleStateFiles()
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("getting home dir: %w", err)
@@ -247,8 +285,10 @@ func writeHooksTo(settingsPath string) error {
 	//   SessionStart                  → green  (会话启动，空闲等待)
 	//   UserPromptSubmit              → blue   (用户提交 prompt，开始思考)
 	//   PreToolUse (AskUserQuestion)  → red    (需要用户回答)
-	//   PostToolUse (AskUserQuestion) → blue   (回答完成，回到思考)
-	//   PermissionRequest             → red    (需要用户授权)
+	//   PostToolUse (AskUserQuestion) → blue   (回答完成，继续思考)
+	//   PreToolUse (Bash)             → red    (需要用户授权命令)
+	//   PostToolUse (Bash)            → blue   (授权完成，继续思考)
+	//   PermissionRequest             → red    (系统权限弹窗)
 	//   Stop                          → green  (完成，等待用户)
 	newHooks := map[string][]any{
 		"UserPromptSubmit": {map[string]any{
@@ -267,24 +307,46 @@ func writeHooksTo(settingsPath string) error {
 				},
 			},
 		}},
-		"PreToolUse": {map[string]any{
-			"matcher": "AskUserQuestion",
-			"hooks": []any{
-				map[string]any{
-					"type":    "command",
-					"command": cmd("red"),
+		"PreToolUse": {
+			map[string]any{
+				"matcher": "AskUserQuestion",
+				"hooks": []any{
+					map[string]any{
+						"type":    "command",
+						"command": cmd("red"),
+					},
 				},
 			},
-		}},
-		"PostToolUse": {map[string]any{
-			"matcher": "AskUserQuestion",
-			"hooks": []any{
-				map[string]any{
-					"type":    "command",
-					"command": cmd("blue"),
+			map[string]any{
+				"matcher": "Bash",
+				"hooks": []any{
+					map[string]any{
+						"type":    "command",
+						"command": cmd("red"),
+					},
 				},
 			},
-		}},
+		},
+		"PostToolUse": {
+			map[string]any{
+				"matcher": "AskUserQuestion",
+				"hooks": []any{
+					map[string]any{
+						"type":    "command",
+						"command": cmd("blue"),
+					},
+				},
+			},
+			map[string]any{
+				"matcher": "Bash",
+				"hooks": []any{
+					map[string]any{
+						"type":    "command",
+						"command": cmd("blue"),
+					},
+				},
+			},
+		},
 		"PermissionRequest": {map[string]any{
 			"hooks": []any{
 				map[string]any{
@@ -346,18 +408,13 @@ func ListClaudeSessions() map[int]string {
 
 // ReadSessionState reads the state file for a specific PID and returns
 // the color string and whether the state is fresh (updated within 10s).
-// If the state file is stale or missing but the process is still running,
-// it returns ("green", true) — an idle session is the safe default.
+// If the state file is missing and the process isn't running, it returns
+// ("", false). If the file is stale or missing but the process is still
+// alive, it returns the last known color (or "green" as safe default).
 func ReadSessionState(pid int) (string, bool) {
 	f := stateFileBase + "-" + strconv.Itoa(pid)
 	info, err := os.Stat(f)
 	if err != nil {
-		if isProcessRunning(pid) {
-			return "green", true
-		}
-		return "", false
-	}
-	if time.Since(info.ModTime()) >= 10*time.Second {
 		if isProcessRunning(pid) {
 			return "green", true
 		}
@@ -377,5 +434,11 @@ func ReadSessionState(pid int) (string, bool) {
 		}
 		return "", false
 	}
+	fresh := time.Since(info.ModTime()) < 10*time.Second
+	if !isProcessRunning(pid) && !fresh {
+		return "", false
+	}
+	// Process is running: trust the last-known color even if stale.
+	// No new hook event means the state hasn't changed.
 	return color, true
 }

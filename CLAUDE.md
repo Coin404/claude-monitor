@@ -97,7 +97,7 @@ Key rules:
 SessionStart                  → green  (会话启动，空闲等待)
 UserPromptSubmit              → blue   (用户提交 prompt，开始思考)
 PreToolUse(AskUserQuestion)   → red    (等待用户回答)
-PostToolUse(AskUserQuestion)  → blue   (回答完成，回到思考)
+PostToolUse(AskUserQuestion)  → blue   (回答完成，继续思考)
 PermissionRequest             → red    (等待用户授权)
 Stop                          → green  (完成，等待用户)
 ```
@@ -107,7 +107,7 @@ Stop                          → green  (完成，等待用户)
 - PreToolUse 无 matcher → yellow 会覆盖 AskUserQuestion → red
 - PostToolUse 无 matcher → yellow 会在非 AskUserQuestion 的工具完成后触发，干扰其他状态
 
-因此工具调用期间保持蓝色（思考中），不做区分。但 PostToolUse(AskUserQuestion) 已单独配置，用于在用户回答后立即切回蓝色。
+因此工具调用期间保持蓝色（思考中），不做区分。但 PostToolUse(AskUserQuestion) 已单独配置，用于在用户回答后立即切回绿色。
 
 ## JSON encoding in Go
 
