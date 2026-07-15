@@ -204,6 +204,7 @@ func ReadHookState(runningPIDs []int) (state string, fresh bool) {
 //	PostToolUse (AskUserQuestion) → blue   (回答完成，继续思考)
 //	PreToolUse (Bash)             → red    (需要用户授权命令)
 //	PostToolUse (Bash)            → blue   (授权完成，继续思考)
+//	PostToolUse (generic)          → blue   (授权完成后恢复，无 matcher)
 //	PermissionRequest             → red    (系统权限弹窗)
 //	Stop                          → green  (完成，等待用户)
 func WriteHooks() error {
@@ -288,6 +289,7 @@ func writeHooksTo(settingsPath string) error {
 	//   PostToolUse (AskUserQuestion) → blue   (回答完成，继续思考)
 	//   PreToolUse (Bash)             → red    (需要用户授权命令)
 	//   PostToolUse (Bash)            → blue   (授权完成，继续思考)
+	//   PostToolUse (generic)          → blue   (授权完成后恢复，无 matcher)
 	//   PermissionRequest             → red    (系统权限弹窗)
 	//   Stop                          → green  (完成，等待用户)
 	newHooks := map[string][]any{
@@ -339,6 +341,14 @@ func writeHooksTo(settingsPath string) error {
 			},
 			map[string]any{
 				"matcher": "Bash",
+				"hooks": []any{
+					map[string]any{
+						"type":    "command",
+						"command": cmd("blue"),
+					},
+				},
+			},
+			map[string]any{
 				"hooks": []any{
 					map[string]any{
 						"type":    "command",
