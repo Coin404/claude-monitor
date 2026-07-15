@@ -41,7 +41,9 @@ var (
 )
 
 // CheckClaudeProcess checks if any claude process is running (excluding self).
-// Results are cached for heavyCheckTTL to avoid spawning pgrep on every poll.
+// Uses ps instead of pgrep because pgrep may miss processes spawned from
+// certain parent processes (e.g. IDEs) on macOS.
+// Results are cached for heavyCheckTTL to avoid spawning ps on every poll.
 func CheckClaudeProcess() bool {
 	processCheckMu.Lock()
 	defer processCheckMu.Unlock()
@@ -50,17 +52,29 @@ func CheckClaudeProcess() bool {
 		return lastProcessResult
 	}
 
-	data, err := exec.Command("pgrep", "-f", "claude").Output()
+	selfPID := fmt.Sprint(os.Getpid())
+	data, err := exec.Command("ps", "-eo", "pid,comm=").Output()
 	if err != nil {
 		lastProcessResult = false
 		lastProcessCheck = time.Now()
 		return false
 	}
-	selfPID := fmt.Sprint(os.Getpid())
+
 	running := false
 	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		pid := strings.TrimSpace(line)
-		if pid != "" && pid != selfPID {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		pid, comm := fields[0], fields[1]
+		if pid == selfPID {
+			continue
+		}
+		if comm == "claude" || strings.HasPrefix(comm, "claude") && comm != "claude-monitor" {
 			running = true
 			break
 		}
@@ -88,7 +102,59 @@ func ReadHookState() (state string, fresh bool) {
 	return state, fresh
 }
 
-// CheckProxyActivity detects whether Claude Code has an active TCP
+// CheckWaitingForInput detects whether any Claude Code process is likely
+// waiting for user input (e.g. AskUserQuestion). This is a fallback used
+// when hooks aren't active in the current session.
+//
+// Heuristic: a claude process whose stdin is a TTY and is in a sleeping
+// state (S) is likely blocked on a read waiting for user response.
+func CheckWaitingForInput() bool {
+	// Find claude PIDs (exact comm match, not claude-monitor)
+	data, err := exec.Command("ps", "-eo", "pid,comm=").Output()
+	if err != nil {
+		return false
+	}
+	var claudePIDs []string
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		if fields[1] == "claude" {
+			claudePIDs = append(claudePIDs, fields[0])
+		}
+	}
+
+	for _, pid := range claudePIDs {
+		// Check if stdin is a TTY (interactive session can ask questions)
+		stdin, err := exec.Command("lsof", "-p", pid, "-a", "-d", "0", "-F", "n").Output()
+		if err != nil {
+			continue
+		}
+		if !strings.Contains(string(stdin), "/dev/ttys") &&
+			!strings.Contains(string(stdin), "/dev/tty") &&
+			!strings.Contains(string(stdin), "/dev/pts") {
+			continue
+		}
+
+		// Check process state: S = sleeping (interruptible), likely
+		// blocking on read when combined with TTY stdin.
+		state, err := exec.Command("ps", "-p", pid, "-o", "state=").Output()
+		if err != nil {
+			continue
+		}
+		s := strings.TrimSpace(string(state))
+		if strings.HasPrefix(s, "S") {
+			return true
+		}
+	}
+
+	return false
+}
 // connection to the API proxy. This is used as a fallback when hooks
 // haven't taken effect yet (e.g. session started before hook installation).
 //

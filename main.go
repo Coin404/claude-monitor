@@ -107,9 +107,14 @@ func detectStatus() Status {
 
 	hookState, fresh := ReadHookState()
 	// If hooks aren't active (state file stale or empty), fall back to
-	// proxy activity detection to at least distinguish idle vs working.
+	// proxy activity detection + stdin check to distinguish states.
 	if !fresh {
 		if CheckProxyActivity() {
+			// Proxy active: Claude Code is running. Check whether it's
+			// waiting for user input (AskUserQuestion) vs working.
+			if CheckWaitingForInput() {
+				return StatusBlocked
+			}
 			return StatusWorking
 		}
 		return StatusIdle
