@@ -4,5 +4,7 @@
 #include <stdbool.h>
 
 char* getWindowOwners(void);
+bool hasAccessibilityPermission(void);
+void requestAccessibilityPermission(void);
 
 #endif

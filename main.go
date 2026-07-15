@@ -52,6 +52,8 @@ func main() {
 }
 
 func onReady() {
+	RequestAccessibilityPermission()
+
 	rewriteItem := systray.AddMenuItem("Re-write Hooks", "重新写入 Claude Code hooks 配置")
 	systray.AddSeparator()
 	quitItem := systray.AddMenuItem("Quit", "退出 Claude Monitor")
@@ -107,8 +109,8 @@ func detectStatus() Status {
 	if !fresh {
 		if CheckProxyActivity() {
 			// Proxy active: Claude Code is running. Check whether it's
-			// waiting for user input (AskUserQuestion) vs working.
-			if CheckWaitingForInput() {
+			// waiting for user input (AskUserQuestion dialog) vs working.
+			if HasDialogWindow() {
 				return StatusBlocked
 			}
 			return StatusWorking

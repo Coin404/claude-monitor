@@ -1,14 +1,13 @@
 package main
 
 /*
-#cgo LDFLAGS: -framework CoreGraphics
+#cgo LDFLAGS: -framework CoreGraphics -framework ApplicationServices
 #include "a11y_bridge.h"
 #include <stdlib.h>
 */
 import "C"
 import (
 	"strings"
-	"time"
 	"unsafe"
 )
 
@@ -22,17 +21,14 @@ func GetWindowOwners() (string, error) {
 }
 
 func HasDialogWindow() bool {
-	dialogCheckMu.Lock()
-	defer dialogCheckMu.Unlock()
-
-	if time.Since(lastDialogCheck) < heavyCheckTTL {
-		return lastDialogResult
-	}
-
 	owners, err := GetWindowOwners()
-	result := err == nil && owners != "" && strings.TrimSpace(owners) != ""
+	return err == nil && owners != "" && strings.TrimSpace(owners) != ""
+}
 
-	lastDialogCheck = time.Now()
-	lastDialogResult = result
-	return result
+func HasAccessibilityPermission() bool {
+	return bool(C.hasAccessibilityPermission())
+}
+
+func RequestAccessibilityPermission() {
+	C.requestAccessibilityPermission()
 }

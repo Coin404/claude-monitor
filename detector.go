@@ -7,61 +7,25 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"sync"
 	"time"
 )
 
 const stateFile = "/tmp/claude-monitor-state"
 
-// Cache TTL for heavy operations (pgrep, CGWindow, lsof).
-// These don't change sub-100ms, so caching reduces CPU and keeps the
-// fast path (ReadHookState) responsive.
-const heavyCheckTTL = 500 * time.Millisecond
-
-// Process check cache — avoids spawning pgrep on every poll tick.
 var (
-	processCheckMu    sync.Mutex
-	lastProcessCheck  time.Time
-	lastProcessResult bool
+	proxyHost = "127.0.0.1"
+	proxyPort = "15721"
 )
 
-// Proxy activity cache — avoids spawning lsof on every poll tick.
-var (
-	proxyCheckMu    sync.Mutex
-	lastProxyCheck  time.Time
-	lastProxyActive bool
-	proxyHost       = "127.0.0.1"
-	proxyPort       = "15721"
-)
-
-// Dialog window cache — avoids CGWindow enumeration on every poll tick.
-var (
-	dialogCheckMu    sync.Mutex
-	lastDialogCheck  time.Time
-	lastDialogResult bool
-)
-
-// CheckClaudeProcess checks if any claude process is running (excluding self).
-// Uses ps instead of pgrep because pgrep may miss processes spawned from
-// certain parent processes (e.g. IDEs) on macOS.
-// Results are cached for heavyCheckTTL to avoid spawning ps on every poll.
+// CheckClaudeProcess checks if any claude process is running (excluding self
+// and claude-monitor). Uses ps for broad process discovery.
 func CheckClaudeProcess() bool {
-	processCheckMu.Lock()
-	defer processCheckMu.Unlock()
-
-	if time.Since(lastProcessCheck) < heavyCheckTTL {
-		return lastProcessResult
-	}
-
 	selfPID := fmt.Sprint(os.Getpid())
 	data, err := exec.Command("ps", "-eo", "pid,comm=").Output()
 	if err != nil {
-		lastProcessResult = false
-		lastProcessCheck = time.Now()
 		return false
 	}
 
-	running := false
 	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -76,13 +40,10 @@ func CheckClaudeProcess() bool {
 			continue
 		}
 		if comm == "claude" || strings.HasPrefix(comm, "claude") && comm != "claude-monitor" {
-			running = true
-			break
+			return true
 		}
 	}
-	lastProcessResult = running
-	lastProcessCheck = time.Now()
-	return running
+	return false
 }
 
 // ReadHookState reads the state written by Claude Code hooks.
@@ -103,116 +64,17 @@ func ReadHookState() (state string, fresh bool) {
 	return state, fresh
 }
 
-// stdin check cache — avoids spawning ps+lsof on every poll tick.
-var (
-	stdinCheckMu    sync.Mutex
-	lastStdinCheck  time.Time
-	lastStdinResult bool
-)
-
-// CheckWaitingForInput detects whether any Claude Code process is likely
-// waiting for user input (e.g. AskUserQuestion). This is a fallback used
-// when hooks aren't active in the current session.
-//
-// Heuristic: a claude process whose stdin is a TTY and is in a sleeping
-// state (S) is likely blocked on a read waiting for user response.
-//
-// Results are cached for heavyCheckTTL.
-func CheckWaitingForInput() bool {
-	stdinCheckMu.Lock()
-	defer stdinCheckMu.Unlock()
-
-	if time.Since(lastStdinCheck) < heavyCheckTTL {
-		return lastStdinResult
-	}
-
-	result := checkClaudeWaitingForInput()
-
-	lastStdinCheck = time.Now()
-	lastStdinResult = result
-	return result
-}
-
-// checkClaudeWaitingForInput does the actual ps + lsof work.
-// Must be called with stdinCheckMu held.
-func checkClaudeWaitingForInput() bool {
-	// Find claude PIDs (exact comm match, not claude-monitor)
-	data, err := exec.Command("ps", "-eo", "pid,comm=").Output()
-	if err != nil {
-		return false
-	}
-	var claudePIDs []string
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		if fields[1] == "claude" {
-			claudePIDs = append(claudePIDs, fields[0])
-		}
-	}
-
-	for _, pid := range claudePIDs {
-		// Check if stdin is a TTY (interactive session can ask questions)
-		stdin, err := exec.Command("lsof", "-p", pid, "-a", "-d", "0", "-F", "n").Output()
-		if err != nil {
-			continue
-		}
-		if !strings.Contains(string(stdin), "/dev/ttys") &&
-			!strings.Contains(string(stdin), "/dev/tty") &&
-			!strings.Contains(string(stdin), "/dev/pts") {
-			continue
-		}
-
-		// Check process state: S = sleeping (interruptible), likely
-		// blocking on read when combined with TTY stdin.
-		state, err := exec.Command("ps", "-p", pid, "-o", "state=").Output()
-		if err != nil {
-			continue
-		}
-		s := strings.TrimSpace(string(state))
-		if strings.HasPrefix(s, "S") {
-			return true
-		}
-	}
-
-	return false
-}
-
 // CheckProxyActivity detects whether Claude Code has an active TCP
 // connection to the API proxy. This is used as a fallback when hooks
 // haven't taken effect yet (e.g. session started before hook installation).
-//
-// Results are cached for heavyCheckTTL to avoid spawning lsof on every
-// poll tick.
 func CheckProxyActivity() bool {
-	proxyCheckMu.Lock()
-	defer proxyCheckMu.Unlock()
-
-	if time.Since(lastProxyCheck) < heavyCheckTTL {
-		return lastProxyActive
-	}
-
-	// lsof -i TCP:15721 -s TCP:ESTABLISHED -n
-	// -i TCP:PORT   → filter by port
-	// -s TCP:STATE  → only established connections
-	// -n            → no hostname resolution (faster)
 	cmd := exec.Command("lsof",
 		"-i", "TCP:"+proxyPort,
 		"-s", "TCP:ESTABLISHED",
 		"-n",
 	)
 	output, err := cmd.Output()
-	active := err == nil && len(output) > 0 && strings.Contains(string(output), proxyHost)
-
-	lastProxyCheck = time.Now()
-	lastProxyActive = active
-
-	return active
+	return err == nil && len(output) > 0 && strings.Contains(string(output), proxyHost)
 }
 
 // WriteHooks installs hooks into ~/.claude/settings.json and
