@@ -201,7 +201,7 @@ PreToolUse 有两条 entry：一条无 matcher（匹配所有工具），一条�
 
 ```
 1. CheckClaudeProcess() == false  →  StatusStopped（灰）
-   pgrep -f claude，排除自身 PID
+   ps -eo pid,comm=，精确匹配 comm == "claude"，排除自身 PID
 
 2. HasDialogWindow() == true     →  StatusBlocked（红）
    CGWindow API 检测弹窗层窗口（layer 1-100），仅匹配 Claude 相关进程
@@ -211,9 +211,12 @@ PreToolUse 有两条 entry：一条无 matcher（匹配所有工具），一条�
    fresh = 文件修改时间 < 10 秒
 
    3a. !fresh（状态文件过期或不存在）:
-       CheckProxyActivity() == true  →  StatusWorking（蓝：fallback）
        CheckProxyActivity() == false →  StatusIdle   （绿：fallback）
-       通过 lsof 检测 127.0.0.1:15721 的 TCP 活动连接（500ms 缓存）
+       CheckProxyActivity() == true:
+         CheckWaitingForInput() == true  →  StatusBlocked（红：等待用户回复）
+         CheckWaitingForInput() == false →  StatusWorking（蓝：工作中）
+       CheckProxyActivity 通过 lsof 检测 127.0.0.1:15721 的 TCP 连接（500ms 缓存）
+       CheckWaitingForInput 通过 ps + lsof 检测 Claude 进程是否在 TTY 上等待 stdin（500ms 缓存）
 
    3b. fresh（状态文件新鲜）:
        "green"  → StatusIdle      （绿：等待用户下一条指令）
@@ -224,7 +227,10 @@ PreToolUse 有两条 entry：一条无 matcher（匹配所有工具），一条�
        default  → StatusIdle      （绿：未知状态默认空闲）
 ```
 
-**Fallback 机制说明**：当 hooks 尚未在当前 session 生效时（如 claude-monitor 晚于 Claude Code 启动），状态文件处于过期状态。此时通过 lsof 检测 Claude Code 的 API 代理连接（127.0.0.1:15721），至少区分 Idle（无连接）和 Working（有连接）。
+**Fallback 机制说明**：当 hooks 尚未在当前 session 生效时（如 claude-monitor 晚于 Claude Code 启动），状态文件处于过期状态。此时：
+1. 通过 lsof 检测 API 代理连接判断 Idle/Working
+2. 通过检测 Claude 进程是否在 TTY 上等待 stdin（sleeping + TTY stdin）推断 Blocked 状态（AskUserQuestion 等待用户回复）
+3. 覆盖率：Idle、Working、Blocked；无法区分 Submitted 和 ToolUse
 
 ## 菜单栏菜单
 
@@ -240,10 +246,11 @@ PreToolUse 有两条 entry：一条无 matcher（匹配所有工具），一条�
 - `detectStatus()`: 优先级级联判断进程→弹窗→hook 状态
 - `onExit()`: systray 退出回调（空实现）
 
-### detector.go — 进程检测 + hooks 管理 + 状态文件 + 代理检测
-- `CheckClaudeProcess()`: 通过 `pgrep -f claude` 检测进程，排除自身 PID
+### detector.go — 进程检测 + hooks 管理 + 状态文件 + 代理检测 + stdin 检测
+- `CheckClaudeProcess()`: 通过 `ps` 检测进程（使用 comm 精确匹配 `claude`，比 pgrep 更可靠），结果缓存 500ms
 - `ReadHookState()`: 读取 `/tmp/claude-monitor-state`，返回状态字符串和 freshness 标记（修改时间 < 10s 视为新鲜）
 - `CheckProxyActivity()`: 通过 `lsof -i TCP:15721` 检测 API 代理连接，结果缓存 500ms，作为 hooks 未生效时的 fallback
+- `CheckWaitingForInput()`: 检测 Claude 进程是否在 TTY 上等待 stdin（sleeping + TTY stdin），用于在 hooks 未生效时推断 Blocked 状态
 - `WriteHooks()`: 合并式安装 hooks 到 `~/.claude/settings.json` 和 `~/.claude/settings.local.json`，带 `changed` flag 避免无效写入，清理 6 个受管事件（含 Elicitation），返回 error
 
 ### icon.go — 纯 Go 圆形图标生成
