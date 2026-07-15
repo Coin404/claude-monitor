@@ -64,12 +64,11 @@ func ReadHookState() (state string, fresh bool) {
 // poll tick (50ms).
 func CheckProxyActivity() bool {
 	proxyCheckMu.Lock()
+	defer proxyCheckMu.Unlock()
+
 	if time.Since(lastProxyCheck) < proxyCheckTTL {
-		result := lastProxyActive
-		proxyCheckMu.Unlock()
-		return result
+		return lastProxyActive
 	}
-	proxyCheckMu.Unlock()
 
 	// lsof -i TCP:15721 -s TCP:ESTABLISHED -n
 	// -i TCP:PORT   → filter by port
@@ -83,10 +82,8 @@ func CheckProxyActivity() bool {
 	output, err := cmd.Output()
 	active := err == nil && len(output) > 0 && strings.Contains(string(output), proxyHost)
 
-	proxyCheckMu.Lock()
 	lastProxyCheck = time.Now()
 	lastProxyActive = active
-	proxyCheckMu.Unlock()
 
 	return active
 }
