@@ -105,7 +105,17 @@ func detectStatus() Status {
 		return StatusBlocked
 	}
 
-	switch ReadHookState() {
+	hookState, fresh := ReadHookState()
+	// If hooks aren't active (state file stale or empty), fall back to
+	// proxy activity detection to at least distinguish idle vs working.
+	if !fresh {
+		if CheckProxyActivity() {
+			return StatusWorking
+		}
+		return StatusIdle
+	}
+
+	switch hookState {
 	case "green":
 		return StatusIdle
 	case "yellow":
