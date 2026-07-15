@@ -84,20 +84,30 @@ Key rules:
 
 ## Color state machine (current)
 
+### Tray icon states
+| 颜色 | 状态 | 含义 |
+|------|------|------|
+| 灰   | 未运行 | Claude Code 没有打开 |
+| 绿   | 空闲 | 完成任务/等待用户输入 |
+| 蓝   | 思考中 | Claude 正在思考/生成输出 |
+| 红   | 等待确认 | 弹出询问权限/确认方案（AskUserQuestion、PermissionRequest）|
+
+### Hook color mapping
 ```
-UserPromptSubmit → yellow (用户提交)
-SessionStart     → orange (开始输出)
-PreToolUse(Ask)  → red    (等待用户操作)
-Stop             → green  (完成)
+SessionStart                  → green  (会话启动，空闲等待)
+UserPromptSubmit              → blue   (用户提交 prompt，开始思考)
+PreToolUse(AskUserQuestion)   → red    (等待用户回答)
+PostToolUse(AskUserQuestion)  → blue   (回答完成，回到思考)
+PermissionRequest             → red    (等待用户授权)
+Stop                          → green  (完成，等待用户)
 ```
 
-Fallback (when hooks stale >10s):
-- `CheckProxyActivity()` → blue/Working (proxy TCP connection active)
-- `HasDialogWindow()` → red/Blocked (CGWindow-based dialog detection for AskUserQuestion/SecurityAgent dialogs)
+### 为什么没有黄色（工具调用）
+通用 PreToolUse/PostToolUse（无 matcher）会与 AskUserQuestion 的红色冲突：
+- PreToolUse 无 matcher → yellow 会覆盖 AskUserQuestion → red
+- PostToolUse 无 matcher → yellow 会在非 AskUserQuestion 的工具完成后触发，干扰其他状态
 
-## PostToolUse was removed
-
-Originally used PostToolUse → blue, but it fires immediately after PreToolUse(AskUserQuestion) BEFORE the user answers, causing red→blue→red flash. Removed entirely.
+因此工具调用期间保持蓝色（思考中），不做区分。但 PostToolUse(AskUserQuestion) 已单独配置，用于在用户回答后立即切回蓝色。
 
 ## JSON encoding in Go
 

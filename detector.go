@@ -7,27 +7,25 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
 const stateFileBase = "/tmp/claude-monitor-state"
 const stateFilePattern = "/tmp/claude-monitor-state-*"
 
-var (
-	proxyHost = "127.0.0.1"
-	proxyPort = "15721"
-)
-
-// CheckClaudeProcess checks if any claude process is running (excluding self
-// and claude-monitor). Uses ps for broad process discovery.
-func CheckClaudeProcess() bool {
+// ListClaudeProcesses returns PIDs of all running claude processes
+// (excluding self and claude-monitor).
+func ListClaudeProcesses() []int {
 	selfPID := fmt.Sprint(os.Getpid())
 	data, err := exec.Command("ps", "-eo", "pid,comm=").Output()
 	if err != nil {
-		return false
+		return nil
 	}
 
+	var pids []int
 	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -37,15 +35,24 @@ func CheckClaudeProcess() bool {
 		if len(fields) < 2 {
 			continue
 		}
-		pid, comm := fields[0], fields[1]
-		if pid == selfPID {
+		pidStr, comm := fields[0], fields[1]
+		if pidStr == selfPID {
 			continue
 		}
-		if comm == "claude" || strings.HasPrefix(comm, "claude") && comm != "claude-monitor" {
-			return true
+		if comm == "claude" || (strings.HasPrefix(comm, "claude") && comm != "claude-monitor") {
+			pid, err := strconv.Atoi(pidStr)
+			if err == nil {
+				pids = append(pids, pid)
+			}
 		}
 	}
-	return false
+	return pids
+}
+
+// isProcessRunning checks whether a process with the given PID is alive.
+func isProcessRunning(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	return err == nil
 }
 
 // colorPriority maps hook colors to urgency (higher = more urgent).
@@ -57,10 +64,56 @@ var colorPriority = map[string]int{
 	"green":  1,
 }
 
+// sessionWorkDir returns the working directory of a process.
+// Returns the last component (project name) for display, or "?" if
+// the directory cannot be determined.
+func sessionWorkDir(pid int) string {
+	out, err := exec.Command("lsof", "-p", strconv.Itoa(pid), "-a", "-d", "cwd", "-Fn").Output()
+	if err != nil {
+		return "?"
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "n") {
+			dir := line[1:]
+			return filepath.Base(dir)
+		}
+	}
+	return "?"
+}
+
+// sessionColor reads the state file for a PID and returns its color.
+// If the state file is stale (>10s) or missing, returns "green" — an
+// idle session is the safe default when we can't determine state.
+func sessionColor(pid int) string {
+	f := stateFileBase + "-" + strconv.Itoa(pid)
+	info, err := os.Stat(f)
+	if err != nil {
+		return "green"
+	}
+	if time.Since(info.ModTime()) >= 10*time.Second {
+		return "green"
+	}
+	data, err := os.ReadFile(f)
+	if err != nil {
+		return "green"
+	}
+	color := strings.TrimSpace(string(data))
+	if color == "" {
+		return "green"
+	}
+	return color
+}
+
 // ReadHookState reads all per-session state files written by Claude Code
-// hooks. It returns the most urgent state across all active sessions, and
-// whether any state was fresh (written within the last 10 seconds).
-func ReadHookState() (state string, fresh bool) {
+// hooks. It filters out files belonging to dead processes and returns the
+// most urgent state across all active sessions along with whether any
+// state was fresh (updated within 10 seconds).
+func ReadHookState(runningPIDs []int) (state string, fresh bool) {
+	pidSet := make(map[int]bool, len(runningPIDs))
+	for _, pid := range runningPIDs {
+		pidSet[pid] = true
+	}
+
 	files, err := filepath.Glob(stateFilePattern)
 	if err != nil || len(files) == 0 {
 		return "", false
@@ -70,6 +123,16 @@ func ReadHookState() (state string, fresh bool) {
 	bestPriority := 0
 
 	for _, f := range files {
+		base := filepath.Base(f)
+		pidStr := strings.TrimPrefix(base, "claude-monitor-state-")
+		pid, err := strconv.Atoi(pidStr)
+		if err != nil {
+			continue
+		}
+		// Skip state files belonging to dead processes
+		if !pidSet[pid] {
+			continue
+		}
 		info, err := os.Stat(f)
 		if err != nil {
 			continue
@@ -95,19 +158,6 @@ func ReadHookState() (state string, fresh bool) {
 	return bestState, true
 }
 
-// CheckProxyActivity detects whether Claude Code has an active TCP
-// connection to the API proxy. This is used as a fallback when hooks
-// haven't taken effect yet (e.g. session started before hook installation).
-func CheckProxyActivity() bool {
-	cmd := exec.Command("lsof",
-		"-i", "TCP:"+proxyPort,
-		"-s", "TCP:ESTABLISHED",
-		"-n",
-	)
-	output, err := cmd.Output()
-	return err == nil && len(output) > 0 && strings.Contains(string(output), proxyHost)
-}
-
 // WriteHooks installs hooks into ~/.claude/settings.json and
 // ~/.claude/settings.local.json. It merges with existing hooks instead
 // of overwriting them, and only writes to disk if something actually
@@ -115,9 +165,10 @@ func CheckProxyActivity() bool {
 //
 // Hook color semantics:
 //
-//	UserPromptSubmit              → yellow (用户提交 prompt)
-//	SessionStart                  → orange (开始输出)
+//	SessionStart                  → green  (会话启动，空闲等待)
+//	UserPromptSubmit              → blue   (用户提交 prompt，开始思考)
 //	PreToolUse (AskUserQuestion)  → red    (需要用户回答)
+//	PostToolUse (AskUserQuestion) → blue   (回答完成，回到思考)
 //	PermissionRequest             → red    (需要用户授权)
 //	Stop                          → green  (完成，等待用户)
 func WriteHooks() error {
@@ -162,7 +213,7 @@ func writeHooksTo(settingsPath string) error {
 
 	// Events managed by claude-monitor (including deprecated Elicitation
 	// from older versions, matching claude-traffic-light cleanup behavior).
-	managedEvents := []string{"SessionStart", "Stop", "PreToolUse", "UserPromptSubmit", "PermissionRequest", "Elicitation"}
+	managedEvents := []string{"SessionStart", "Stop", "PreToolUse", "PostToolUse", "UserPromptSubmit", "PermissionRequest", "Elicitation"}
 
 	// Remove old claude-monitor entries (containing stateFile path) from managed events
 	for _, event := range managedEvents {
@@ -191,15 +242,20 @@ func writeHooksTo(settingsPath string) error {
 		return "echo " + color + " > " + stateFileBase + "-$PPID"
 	}
 
-	// New hook entries matching traffic-light's hook model.
-	// PreToolUse only matches AskUserQuestion (red); normal tool execution
-	// does not change state — the previous color (orange/yellow) persists.
+	// New hook entries.
+	// Color semantics (CLI Claude Code):
+	//   SessionStart                  → green  (会话启动，空闲等待)
+	//   UserPromptSubmit              → blue   (用户提交 prompt，开始思考)
+	//   PreToolUse (AskUserQuestion)  → red    (需要用户回答)
+	//   PostToolUse (AskUserQuestion) → blue   (回答完成，回到思考)
+	//   PermissionRequest             → red    (需要用户授权)
+	//   Stop                          → green  (完成，等待用户)
 	newHooks := map[string][]any{
 		"UserPromptSubmit": {map[string]any{
 			"hooks": []any{
 				map[string]any{
 					"type":    "command",
-					"command": cmd("yellow"),
+					"command": cmd("blue"),
 				},
 			},
 		}},
@@ -207,7 +263,7 @@ func writeHooksTo(settingsPath string) error {
 			"hooks": []any{
 				map[string]any{
 					"type":    "command",
-					"command": cmd("orange"),
+					"command": cmd("green"),
 				},
 			},
 		}},
@@ -217,6 +273,15 @@ func writeHooksTo(settingsPath string) error {
 				map[string]any{
 					"type":    "command",
 					"command": cmd("red"),
+				},
+			},
+		}},
+		"PostToolUse": {map[string]any{
+			"matcher": "AskUserQuestion",
+			"hooks": []any{
+				map[string]any{
+					"type":    "command",
+					"command": cmd("blue"),
 				},
 			},
 		}},
@@ -264,4 +329,53 @@ func writeHooksTo(settingsPath string) error {
 		return fmt.Errorf("writing %s: %w", settingsPath, err)
 	}
 	return nil
+}
+
+// ListClaudeSessions returns a map of PID → color for all running
+// claude sessions. The process list (ps) is the source of truth;
+// state files only provide the color, defaulting to "green" when
+// unavailable or stale.
+func ListClaudeSessions() map[int]string {
+	pids := ListClaudeProcesses()
+	result := make(map[int]string, len(pids))
+	for _, pid := range pids {
+		result[pid] = sessionColor(pid)
+	}
+	return result
+}
+
+// ReadSessionState reads the state file for a specific PID and returns
+// the color string and whether the state is fresh (updated within 10s).
+// If the state file is stale or missing but the process is still running,
+// it returns ("green", true) — an idle session is the safe default.
+func ReadSessionState(pid int) (string, bool) {
+	f := stateFileBase + "-" + strconv.Itoa(pid)
+	info, err := os.Stat(f)
+	if err != nil {
+		if isProcessRunning(pid) {
+			return "green", true
+		}
+		return "", false
+	}
+	if time.Since(info.ModTime()) >= 10*time.Second {
+		if isProcessRunning(pid) {
+			return "green", true
+		}
+		return "", false
+	}
+	data, err := os.ReadFile(f)
+	if err != nil {
+		if isProcessRunning(pid) {
+			return "green", true
+		}
+		return "", false
+	}
+	color := strings.TrimSpace(string(data))
+	if color == "" {
+		if isProcessRunning(pid) {
+			return "green", true
+		}
+		return "", false
+	}
+	return color, true
 }

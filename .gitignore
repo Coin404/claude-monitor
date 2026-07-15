@@ -13,3 +13,6 @@ Claude Monitor.app/Contents/_CodeSignature/
 .vscode/
 *.swp
 *.swo
+
+# Logs
+log/
