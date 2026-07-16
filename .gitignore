@@ -1,9 +1,12 @@
 # Built binary
 claude-monitor
-Claude Monitor.app/Contents/MacOS/claude-monitor
+Novascope.app/Contents/MacOS/claude-monitor
 
 # Code signature
-Claude Monitor.app/Contents/_CodeSignature/
+Novascope.app/Contents/_CodeSignature/
+
+# Generated resources (source is in icon/)
+Novascope.app/Contents/Resources/
 
 # macOS
 .DS_Store

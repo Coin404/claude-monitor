@@ -120,7 +120,6 @@ func onReady() {
 	ensureLogDir()
 
 	rewriteItem := systray.AddMenuItem("Re-write Hooks", "重新写入 Claude Code hooks 配置")
-	bringToFrontItem := systray.AddMenuItem("Bring Claude to Front", "把 Claude 所在终端窗口带到前台")
 	systray.AddSeparator()
 
 	allSessionsItem = systray.AddMenuItem("Monitor All Sessions", "监控所有运行中的会话")
@@ -132,7 +131,7 @@ func onReady() {
 	}
 
 	systray.AddSeparator()
-	quitItem := systray.AddMenuItem("Quit", "退出 Claude Monitor")
+	quitItem := systray.AddMenuItem("Quit", "退出 Novascope")
 
 	// Poll interval submenu
 	systray.AddSeparator()
@@ -163,26 +162,12 @@ func onReady() {
 	}()
 
 	go func() {
-		for range bringToFrontItem.ClickedCh {
-			pid := selectedPID
-			if pid == 0 {
-				pid = FirstClaudePID()
-			}
-			if pid == 0 {
-				continue
-			}
-			appName := FindTerminalApp(pid)
-			ActivateTerminal(appName)
-		}
-	}()
-
-	go func() {
 		for range quitItem.ClickedCh {
 			systray.Quit()
 		}
 	}()
 
-	// Handle session selection clicks
+	// Handle session selection clicks — switch monitoring AND bring window to front
 	go func() {
 		for range allSessionsItem.ClickedCh {
 			selectedPID = 0
@@ -193,8 +178,15 @@ func onReady() {
 		i := i
 		go func() {
 			for range sessionSlots[i].item.ClickedCh {
-				selectedPID = sessionSlots[i].pid
+				pid := sessionSlots[i].pid
+				selectedPID = pid
 				refreshSessionMenu()
+				// Bring the selected session's window to front
+				if pid != 0 {
+					appName := FindTerminalApp(pid)
+					projectPath := sessionWorkPath(pid)
+					ActivateTerminal(appName, projectPath)
+				}
 			}
 		}()
 	}
@@ -233,11 +225,17 @@ func onReady() {
 			time.Sleep(time.Duration(atomic.LoadInt32(&pollIntervalMs)) * time.Millisecond)
 			detected, reason := detectStatus()
 			if detected != currentStatus {
-				// Notify on transitions to/from blocked (red)
+				// Notify only when entering blocked (red), include session name
 				if detected == StatusBlocked {
-					sendNotification("Claude Monitor", "Claude 需要你的确认")
-				} else if currentStatus == StatusBlocked {
-					sendNotification("Claude Monitor", "Claude 已恢复，继续工作")
+					pid := selectedPID
+					if pid == 0 {
+						pid = findBlockedPID()
+					}
+					project := "Claude"
+					if pid != 0 {
+						project = sessionWorkDir(pid)
+					}
+					sendNotification("Novascope", project+" 需要你的确认")
 				}
 				logStatusChange(currentStatus, detected, reason)
 				currentStatus = detected

@@ -96,17 +96,26 @@ var colorPriority = map[string]int{
 // Returns the last component (project name) for display, or "?" if
 // the directory cannot be determined.
 func sessionWorkDir(pid int) string {
+	dir := sessionWorkPath(pid)
+	if dir == "" {
+		return "?"
+	}
+	return filepath.Base(dir)
+}
+
+// sessionWorkPath returns the full working directory path of a process,
+// or empty string if the directory cannot be determined.
+func sessionWorkPath(pid int) string {
 	out, err := exec.Command("lsof", "-p", strconv.Itoa(pid), "-a", "-d", "cwd", "-Fn").Output()
 	if err != nil {
-		return "?"
+		return ""
 	}
 	for _, line := range strings.Split(string(out), "\n") {
 		if strings.HasPrefix(line, "n") {
-			dir := line[1:]
-			return filepath.Base(dir)
+			return line[1:]
 		}
 	}
-	return "?"
+	return ""
 }
 
 // sessionColor reads the state file for a PID and returns its color.
@@ -505,9 +514,20 @@ func FindTerminalApp(pid int) string {
 }
 
 // ActivateTerminal uses osascript to bring the host application to the
-// foreground. It tries the given appName first, then falls back through
-// common terminal apps.
-func ActivateTerminal(appName string) error {
+// foreground. If projectDir is not empty, it first tries to use
+// "open -a AppName projectDir" which is the most reliable way to
+// focus the correct window in multi-window IDEs.
+func ActivateTerminal(appName, projectDir string) error {
+	// Best effort: use "open -a" with project directory to focus the
+	// specific project window in multi-window IDEs
+	if projectDir != "" && appName != "" {
+		_, err := exec.Command("open", "-a", appName, projectDir).Output()
+		if err == nil {
+			return nil
+		}
+	}
+
+	// Fallback 1: set frontmost via System Events
 	tryFrontmost := func(name string) bool {
 		script := fmt.Sprintf(
 			`tell application "System Events" to set frontmost of process "%s" to true`,
@@ -526,7 +546,7 @@ func ActivateTerminal(appName string) error {
 		}
 	}
 
-	// Fallback: try common terminals in order
+	// Fallback 2: try common terminals
 	for _, name := range []string{"Terminal", "iTerm2", "Warp", "kitty", "WezTerm", "Alacritty"} {
 		if tryFrontmost(name) || tryActivate(name) {
 			return nil
@@ -542,4 +562,16 @@ func FirstClaudePID() int {
 		return 0
 	}
 	return pids[0]
+}
+
+// findBlockedPID returns the PID of the session that is currently in
+// "red" (blocked) state, or 0 if none is blocked.
+func findBlockedPID() int {
+	sessions := ListClaudeSessions()
+	for pid, color := range sessions {
+		if color == "red" {
+			return pid
+		}
+	}
+	return 0
 }
