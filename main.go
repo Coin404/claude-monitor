@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"sort"
@@ -47,6 +48,7 @@ var (
 	selectedPID     int             // 0 = monitor all sessions
 	sessionSlots    [10]sessionSlot // pre-allocated menu item slots
 	allSessionsItem *systray.MenuItem
+	lastNotifyTime  time.Time // debounce notifications
 )
 
 // getLogPath returns the path to the log file. It walks up from the
@@ -118,6 +120,7 @@ func onReady() {
 	ensureLogDir()
 
 	rewriteItem := systray.AddMenuItem("Re-write Hooks", "重新写入 Claude Code hooks 配置")
+	bringToFrontItem := systray.AddMenuItem("Bring Claude to Front", "把 Claude 所在终端窗口带到前台")
 	systray.AddSeparator()
 
 	allSessionsItem = systray.AddMenuItem("Monitor All Sessions", "监控所有运行中的会话")
@@ -156,6 +159,20 @@ func onReady() {
 			if err := WriteHooks(); err != nil {
 				fmt.Fprintf(os.Stderr, "claude-monitor: failed to re-write hooks: %v\n", err)
 			}
+		}
+	}()
+
+	go func() {
+		for range bringToFrontItem.ClickedCh {
+			pid := selectedPID
+			if pid == 0 {
+				pid = FirstClaudePID()
+			}
+			if pid == 0 {
+				continue
+			}
+			appName := FindTerminalApp(pid)
+			ActivateTerminal(appName)
 		}
 	}()
 
@@ -216,6 +233,12 @@ func onReady() {
 			time.Sleep(time.Duration(atomic.LoadInt32(&pollIntervalMs)) * time.Millisecond)
 			detected, reason := detectStatus()
 			if detected != currentStatus {
+				// Notify on transitions to/from blocked (red)
+				if detected == StatusBlocked {
+					sendNotification("Claude Monitor", "Claude 需要你的确认")
+				} else if currentStatus == StatusBlocked {
+					sendNotification("Claude Monitor", "Claude 已恢复，继续工作")
+				}
 				logStatusChange(currentStatus, detected, reason)
 				currentStatus = detected
 				systray.SetIcon(statusIcons[currentStatus])
@@ -259,6 +282,21 @@ func logStatusChange(old, new Status, reason string) {
 	} else {
 		fmt.Fprintf(f, "%s [all] %s → %s (%s) | %s\n", now, statusLabel(old), statusLabel(new), reason, snapshot)
 	}
+}
+
+// sendNotification posts a macOS user notification via osascript.
+// Notifications are debounced to at most one every 3 seconds.
+func sendNotification(title, message string) {
+	if time.Since(lastNotifyTime) < 3*time.Second {
+		return
+	}
+	lastNotifyTime = time.Now()
+	script := fmt.Sprintf(
+		`display notification "%s" with title "%s"`,
+		strings.ReplaceAll(message, `"`, `\"`),
+		strings.ReplaceAll(title, `"`, `\"`),
+	)
+	exec.Command("osascript", "-e", script).Start()
 }
 
 func refreshSessionMenu() {
