@@ -25,6 +25,7 @@ let window = NSWindow(
 window.title = "Novascope Stats"
 window.center()
 window.isReleasedWhenClosed = false
+window.level = .floating
 
 // WebView
 let config = WKWebViewConfiguration()
@@ -43,4 +44,5 @@ let delegate = WindowDelegate()
 window.delegate = delegate
 
 window.makeKeyAndOrderFront(nil)
+NSApp.activate(ignoringOtherApps: true)
 app.run()

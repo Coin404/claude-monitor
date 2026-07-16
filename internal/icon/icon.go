@@ -16,8 +16,8 @@ func GenerateCircleIcon(hexColor string) []byte {
 	img := image.NewRGBA(image.Rect(0, 0, size, size))
 
 	// Draw anti-aliased circle with proper alpha
-	for y := 0; y < size; y++ {
-		for x := 0; x < size; x++ {
+	for y := range size {
+		for x := range size {
 			dx := float64(x) + 0.5 - radius
 			dy := float64(y) + 0.5 - radius
 			dist := math.Sqrt(dx*dx+dy*dy) - radius + 0.5
@@ -37,7 +37,7 @@ func GenerateCircleIcon(hexColor string) []byte {
 	}
 
 	var buf bytes.Buffer
-	png.Encode(&buf, img)
+	_ = png.Encode(&buf, img)
 	return buf.Bytes()
 }
 

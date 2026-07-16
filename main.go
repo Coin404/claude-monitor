@@ -33,6 +33,7 @@ var (
 	sessionSlots    [10]sessionSlot // pre-allocated menu item slots
 	allSessionsItem *systray.MenuItem
 	lastNotifyTime  time.Time // debounce notifications
+	startupTime     time.Time // suppresses notification during startup grace period
 	tracker         *stats.Tracker
 )
 
@@ -66,7 +67,7 @@ func main() {
 	}
 
 	if err := detect.WriteHooks(); err != nil {
-		fmt.Fprintf(os.Stderr, "claude-monitor: failed to write hooks: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "claude-monitor: failed to write hooks: %v\n", err)
 	}
 
 	systray.Run(onReady, onExit)
@@ -74,6 +75,7 @@ func main() {
 
 func onReady() {
 	core.EnsureLogDir()
+	startupTime = time.Now()
 
 	rewriteItem := systray.AddMenuItem("Re-write Hooks", "Re-write Claude Code hook configuration")
 	systray.AddSeparator()
@@ -117,7 +119,7 @@ func onReady() {
 	go func() {
 		for range rewriteItem.ClickedCh {
 			if err := detect.WriteHooks(); err != nil {
-				fmt.Fprintf(os.Stderr, "claude-monitor: failed to re-write hooks: %v\n", err)
+				_, _ = fmt.Fprintf(os.Stderr, "claude-monitor: failed to re-write hooks: %v\n", err)
 			}
 		}
 	}()
@@ -145,7 +147,7 @@ func onReady() {
 				// Bring the selected session's window to front
 				if pid != 0 {
 					appName := detect.FindTerminalApp(pid)
-					detect.ActivateTerminal(appName)
+					_ = detect.ActivateTerminal(appName)
 				}
 			}
 		}()
@@ -155,7 +157,7 @@ func onReady() {
 	go func() {
 		for range statsChartItem.ClickedCh {
 			ds := tracker.Snapshot()
-			stats.OpenStatsInBrowser(ds)
+			_ = stats.OpenStatsInBrowser(ds)
 		}
 	}()
 
@@ -193,8 +195,10 @@ func onReady() {
 			time.Sleep(time.Duration(atomic.LoadInt32(&pollIntervalMs)) * time.Millisecond)
 			detected, reason := detectStatus()
 			if detected != currentStatus {
-				// Notify only when entering blocked (red), include session name
-				if detected == core.StatusBlocked {
+				// Notify only when entering blocked (red), suppress
+				// during the first 3s after startup to avoid alerts
+				// from the initial state detection.
+				if detected == core.StatusBlocked && time.Since(startupTime) >= 3*time.Second {
 					pid := selectedPID
 					if pid == 0 {
 						pid = detect.FindBlockedPID()
@@ -223,14 +227,14 @@ func logStatusChange(old, new core.Status, reason string) {
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	now := time.Now().Format("2006-01-02 15:04:05")
 	snapshot := sessionStateSnapshot()
 	if selectedPID != 0 {
-		fmt.Fprintf(f, "%s [PID %d] %s → %s (%s) | %s\n", now, selectedPID, core.StatusLabel(old), core.StatusLabel(new), reason, snapshot)
+		_, _ = fmt.Fprintf(f, "%s [PID %d] %s → %s (%s) | %s\n", now, selectedPID, core.StatusLabel(old), core.StatusLabel(new), reason, snapshot)
 	} else {
-		fmt.Fprintf(f, "%s [all] %s → %s (%s) | %s\n", now, core.StatusLabel(old), core.StatusLabel(new), reason, snapshot)
+		_, _ = fmt.Fprintf(f, "%s [all] %s → %s (%s) | %s\n", now, core.StatusLabel(old), core.StatusLabel(new), reason, snapshot)
 	}
 }
 
@@ -246,7 +250,7 @@ func sendNotification(title, message string) {
 		strings.ReplaceAll(message, `"`, `\"`),
 		strings.ReplaceAll(title, `"`, `\"`),
 	)
-	exec.Command("osascript", "-e", script).Start()
+	_ = exec.Command("osascript", "-e", script).Start()
 }
 
 func refreshSessionMenu() {
@@ -260,10 +264,7 @@ func refreshSessionMenu() {
 	sort.Ints(pids)
 
 	// Fill slots (max 10)
-	limit := len(pids)
-	if limit > 10 {
-		limit = 10
-	}
+	limit := min(len(pids), 10)
 
 	// Check if selected PID is still alive
 	if selectedPID != 0 {
@@ -273,7 +274,7 @@ func refreshSessionMenu() {
 		}
 	}
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		if i < limit {
 			pid := pids[i]
 			color := sessions[pid]
@@ -317,7 +318,8 @@ func detectStatus() (core.Status, string) {
 		return core.StatusStopped, "no claude process"
 	}
 
-	hookState, _ := detect.ReadHookState(runningPIDs)
+	hookState, fresh := detect.ReadHookState(runningPIDs)
+	_ = fresh
 	if hookState == "" {
 		return core.StatusIdle, "no hook state"
 	}

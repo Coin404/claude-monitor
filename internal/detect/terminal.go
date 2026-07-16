@@ -33,7 +33,7 @@ func FindTerminalApp(pid int) string {
 	}
 	pid = ppid
 
-	for depth := 0; depth < 10; depth++ {
+	for range 10 {
 		out, err := exec.Command("ps", "-o", "ppid=,comm=", "-p", strconv.Itoa(pid)).Output()
 		if err != nil {
 			return ""

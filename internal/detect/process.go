@@ -19,7 +19,7 @@ func ListClaudeProcesses() []int {
 	}
 
 	var pids []int
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -46,15 +46,6 @@ func ListClaudeProcesses() []int {
 func isProcessRunning(pid int) bool {
 	err := syscall.Kill(pid, 0)
 	return err == nil
-}
-
-// FirstClaudePID returns the first running claude process PID, or 0.
-func FirstClaudePID() int {
-	pids := ListClaudeProcesses()
-	if len(pids) == 0 {
-		return 0
-	}
-	return pids[0]
 }
 
 // FindBlockedPID returns the PID of the session that is currently in

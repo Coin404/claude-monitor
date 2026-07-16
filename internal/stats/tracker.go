@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -74,9 +74,7 @@ func (st *Tracker) Snapshot() *DayStats {
 	defer st.mu.Unlock()
 	ds := *st.today
 	ds.Statuses = make(map[string]float64, len(st.today.Statuses))
-	for k, v := range st.today.Statuses {
-		ds.Statuses[k] = v
-	}
+	maps.Copy(ds.Statuses, st.today.Statuses)
 	return &ds
 }
 
@@ -114,7 +112,7 @@ func (st *Tracker) saveStatsLocked() {
 	if err := enc.Encode(st.today); err != nil {
 		return
 	}
-	os.WriteFile(statsPathForDay(st.day), buf.Bytes(), 0644)
+	_ = os.WriteFile(statsPathForDay(st.day), buf.Bytes(), 0644)
 }
 
 // ---------------------------------------------------------------------------
@@ -175,45 +173,6 @@ func (st *Tracker) FlushCurrentSession() {
 	st.saveStatsLocked()
 }
 
-// MenuSummary returns a short human-readable summary for the tray menu,
-// e.g. "今日 思考2h | 空闲45m | 等待12m".
-func (st *Tracker) MenuSummary() string {
-	st.mu.Lock()
-	defer st.mu.Unlock()
-
-	total := st.today.Total
-	if total < 1 {
-		return "今日 | (暂无数据)"
-	}
-
-	// Order by duration descending
-	type pair struct {
-		key string
-		val float64
-	}
-	var pairs []pair
-	for k, v := range st.today.Statuses {
-		if v >= 1 {
-			pairs = append(pairs, pair{k, v})
-		}
-	}
-	sort.Slice(pairs, func(i, j int) bool { return pairs[i].val > pairs[j].val })
-
-	var parts []string
-	for _, p := range pairs {
-		label := core.StatusDisplayNames[p.key]
-		if label == "" {
-			label = p.key
-		}
-		parts = append(parts, fmt.Sprintf("%s%s", label, formatDuration(p.val)))
-	}
-
-	if len(parts) == 0 {
-		return "今日 | (暂无数据)"
-	}
-	return "今日 | " + strings.Join(parts, " ")
-}
-
 // ---------------------------------------------------------------------------
 // Cleanup
 // ---------------------------------------------------------------------------
@@ -232,7 +191,7 @@ func CleanupOldStats(maxDays int) {
 			continue
 		}
 		if info.ModTime().Before(cutoff) {
-			os.Remove(f)
+			_ = os.Remove(f)
 		}
 	}
 }
@@ -292,11 +251,11 @@ func OpenStatsInBrowser(ds *DayStats) error {
 	}
 	path := f.Name()
 	if _, err := f.WriteString(html); err != nil {
-		f.Close()
-		os.Remove(path)
+		_ = f.Close()
+		_ = os.Remove(path)
 		return fmt.Errorf("writing html: %w", err)
 	}
-	f.Close()
+	_ = f.Close()
 
 	helper, err := ensureStatsHelper()
 	if err != nil {
@@ -343,10 +302,7 @@ func buildSegments(ds *DayStats) []donutSegment {
 			continue
 		}
 		pct := sec / total
-		dashLen := pct*circumference - gap
-		if dashLen < 2 {
-			dashLen = 2 // minimum visible segment
-		}
+		dashLen := max(pct*circumference-gap, 2) // minimum visible segment
 		seg := donutSegment{
 			Key:     key,
 			Color:   core.StatusColorMap[key],

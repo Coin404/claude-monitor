@@ -39,7 +39,7 @@ func sessionWorkPath(pid int) string {
 	if err != nil {
 		return ""
 	}
-	for _, line := range strings.Split(string(out), "\n") {
+	for line := range strings.SplitSeq(string(out), "\n") {
 		if strings.HasPrefix(line, "n") {
 			return line[1:]
 		}
@@ -74,7 +74,7 @@ func sessionColor(pid int) string {
 // plus the legacy state file without a PID suffix.
 func CleanupStaleStateFiles() {
 	// Remove legacy state file (without PID suffix) from older versions
-	os.Remove(stateFileBase)
+	_ = os.Remove(stateFileBase)
 
 	// Collect running PIDs
 	running := make(map[int]bool)
@@ -93,7 +93,7 @@ func CleanupStaleStateFiles() {
 			continue
 		}
 		if !running[pid] {
-			os.Remove(f)
+			_ = os.Remove(f)
 		}
 	}
 }
