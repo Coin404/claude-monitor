@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -13,31 +12,16 @@ import (
 	"time"
 
 	"fyne.io/systray"
-)
 
-type Status int
-
-const (
-	StatusStopped   Status = iota // 灰 — Claude 未运行
-	StatusIdle                     // 绿 — 空闲，等待用户
-	StatusSubmitted                // 黄 — 用户刚提交 prompt
-	StatusWorking                  // 蓝 — 思考/生成中
-	StatusToolUse                  // 橙 — 执行工具中
-	StatusBlocked                  // 红 — 需要用户操作
+	"claude-monitor/internal/core"
+	"claude-monitor/internal/detect"
+	"claude-monitor/internal/icon"
+	"claude-monitor/internal/stats"
 )
 
 var pollIntervalMs int32 = 10 // default 10ms, updated atomically
 
-const (
-	colorGray   = "#8E8E93"
-	colorGreen  = "#34C759"
-	colorYellow = "#FFCC00"
-	colorBlue   = "#007AFF"
-	colorOrange = "#FF9500"
-	colorRed    = "#FF3B30"
-)
-
-var statusIcons map[Status][]byte
+var statusIcons map[core.Status][]byte
 
 type sessionSlot struct {
 	item *systray.MenuItem
@@ -49,41 +33,13 @@ var (
 	sessionSlots    [10]sessionSlot // pre-allocated menu item slots
 	allSessionsItem *systray.MenuItem
 	lastNotifyTime  time.Time // debounce notifications
+	tracker         *stats.Tracker
 )
-
-// getLogPath returns the path to the log file. It walks up from the
-// executable's directory to find go.mod (the project root), then returns
-// <project_root>/log/claude-monitor.log. Falls back to /tmp if the
-// project root cannot be determined.
-func getLogPath() string {
-	exe, err := os.Executable()
-	if err != nil {
-		return "/tmp/claude-monitor.log"
-	}
-	dir := filepath.Dir(exe)
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return filepath.Join(dir, "log", "claude-monitor.log")
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-	return "/tmp/claude-monitor.log"
-}
-
-// ensureLogDir creates the log directory if it doesn't exist.
-func ensureLogDir() {
-	dir := filepath.Dir(getLogPath())
-	os.MkdirAll(dir, 0755)
-}
 
 // sessionStateSnapshot returns a string summarizing all current session
 // states, e.g. "sessions: 12345=green, 12346=yellow".
 func sessionStateSnapshot() string {
-	sessions := ListClaudeSessions()
+	sessions := detect.ListClaudeSessions()
 	if len(sessions) == 0 {
 		return "sessions: none"
 	}
@@ -100,16 +56,16 @@ func sessionStateSnapshot() string {
 }
 
 func main() {
-	statusIcons = map[Status][]byte{
-		StatusStopped:   GenerateCircleIcon(colorGray),
-		StatusIdle:      GenerateCircleIcon(colorGreen),
-		StatusSubmitted: GenerateCircleIcon(colorYellow),
-		StatusWorking:   GenerateCircleIcon(colorBlue),
-		StatusToolUse:   GenerateCircleIcon(colorOrange),
-		StatusBlocked:   GenerateCircleIcon(colorRed),
+	statusIcons = map[core.Status][]byte{
+		core.StatusStopped:   icon.GenerateCircleIcon(core.ColorGray),
+		core.StatusIdle:      icon.GenerateCircleIcon(core.ColorGreen),
+		core.StatusSubmitted: icon.GenerateCircleIcon(core.ColorYellow),
+		core.StatusWorking:   icon.GenerateCircleIcon(core.ColorBlue),
+		core.StatusToolUse:   icon.GenerateCircleIcon(core.ColorOrange),
+		core.StatusBlocked:   icon.GenerateCircleIcon(core.ColorRed),
 	}
 
-	if err := WriteHooks(); err != nil {
+	if err := detect.WriteHooks(); err != nil {
 		fmt.Fprintf(os.Stderr, "claude-monitor: failed to write hooks: %v\n", err)
 	}
 
@@ -117,12 +73,12 @@ func main() {
 }
 
 func onReady() {
-	ensureLogDir()
+	core.EnsureLogDir()
 
-	rewriteItem := systray.AddMenuItem("Re-write Hooks", "重新写入 Claude Code hooks 配置")
+	rewriteItem := systray.AddMenuItem("Re-write Hooks", "Re-write Claude Code hook configuration")
 	systray.AddSeparator()
 
-	allSessionsItem = systray.AddMenuItem("Monitor All Sessions", "监控所有运行中的会话")
+	allSessionsItem = systray.AddMenuItem("Monitor All Sessions", "Monitor all running sessions")
 	allSessionsItem.Check()
 	systray.AddSeparator()
 	for i := range sessionSlots {
@@ -131,19 +87,24 @@ func onReady() {
 	}
 
 	systray.AddSeparator()
-	quitItem := systray.AddMenuItem("Quit", "退出 Novascope")
+	tracker = stats.NewTracker()
+	stats.CleanupOldStats(7)
+	statsChartItem := systray.AddMenuItem("View Stats Chart", "Open statistics chart in a native window")
+	systray.AddSeparator()
+
+	quitItem := systray.AddMenuItem("Quit", "Quit Novascope")
 
 	// Poll interval submenu
 	systray.AddSeparator()
-	item5ms := systray.AddMenuItem("Poll: 5ms", "轮询间隔 5ms")
-	item10ms := systray.AddMenuItem("Poll: 10ms", "轮询间隔 10ms")
-	item30ms := systray.AddMenuItem("Poll: 30ms", "轮询间隔 30ms")
-	item50ms := systray.AddMenuItem("Poll: 50ms", "轮询间隔 50ms")
+	item5ms := systray.AddMenuItem("Poll: 5ms", "Poll interval 5ms")
+	item10ms := systray.AddMenuItem("Poll: 10ms", "Poll interval 10ms")
+	item30ms := systray.AddMenuItem("Poll: 30ms", "Poll interval 30ms")
+	item50ms := systray.AddMenuItem("Poll: 50ms", "Poll interval 50ms")
 	item10ms.Check() // default
 
 	intervalItems := map[int32]*systray.MenuItem{5: item5ms, 10: item10ms, 30: item30ms, 50: item50ms}
 
-	currentStatus := StatusStopped
+	currentStatus := core.StatusStopped
 	systray.SetIcon(statusIcons[currentStatus])
 
 	sigCh := make(chan os.Signal, 1)
@@ -155,7 +116,7 @@ func onReady() {
 
 	go func() {
 		for range rewriteItem.ClickedCh {
-			if err := WriteHooks(); err != nil {
+			if err := detect.WriteHooks(); err != nil {
 				fmt.Fprintf(os.Stderr, "claude-monitor: failed to re-write hooks: %v\n", err)
 			}
 		}
@@ -183,12 +144,20 @@ func onReady() {
 				refreshSessionMenu()
 				// Bring the selected session's window to front
 				if pid != 0 {
-					appName := FindTerminalApp(pid)
-					ActivateTerminal(appName)
+					appName := detect.FindTerminalApp(pid)
+					detect.ActivateTerminal(appName)
 				}
 			}
 		}()
 	}
+
+	// Handle stats chart click
+	go func() {
+		for range statsChartItem.ClickedCh {
+			ds := tracker.Snapshot()
+			stats.OpenStatsInBrowser(ds)
+		}
+	}()
 
 	// Handle poll interval changes
 	for ms, item := range intervalItems {
@@ -225,18 +194,19 @@ func onReady() {
 			detected, reason := detectStatus()
 			if detected != currentStatus {
 				// Notify only when entering blocked (red), include session name
-				if detected == StatusBlocked {
+				if detected == core.StatusBlocked {
 					pid := selectedPID
 					if pid == 0 {
-						pid = findBlockedPID()
+						pid = detect.FindBlockedPID()
 					}
 					project := "Claude"
 					if pid != 0 {
-						project = sessionWorkDir(pid)
+						project = detect.SessionWorkDir(pid)
 					}
-					sendNotification("Novascope", project+" 需要你的确认")
+					sendNotification("Novascope", project+" needs your attention")
 				}
 				logStatusChange(currentStatus, detected, reason)
+				tracker.RecordStatusChange(detected)
 				currentStatus = detected
 				systray.SetIcon(statusIcons[currentStatus])
 			}
@@ -244,29 +214,12 @@ func onReady() {
 	}()
 }
 
-func onExit() {}
-
-func statusLabel(s Status) string {
-	switch s {
-	case StatusStopped:
-		return "stopped(gray)"
-	case StatusIdle:
-		return "idle(green)"
-	case StatusSubmitted:
-		return "submitted(yellow)"
-	case StatusWorking:
-		return "working(blue)"
-	case StatusToolUse:
-		return "tooluse(orange)"
-	case StatusBlocked:
-		return "blocked(red)"
-	default:
-		return "unknown"
-	}
+func onExit() {
+	tracker.FlushCurrentSession()
 }
 
-func logStatusChange(old, new Status, reason string) {
-	f, err := os.OpenFile(getLogPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+func logStatusChange(old, new core.Status, reason string) {
+	f, err := os.OpenFile(core.LogPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return
 	}
@@ -275,9 +228,9 @@ func logStatusChange(old, new Status, reason string) {
 	now := time.Now().Format("2006-01-02 15:04:05")
 	snapshot := sessionStateSnapshot()
 	if selectedPID != 0 {
-		fmt.Fprintf(f, "%s [PID %d] %s → %s (%s) | %s\n", now, selectedPID, statusLabel(old), statusLabel(new), reason, snapshot)
+		fmt.Fprintf(f, "%s [PID %d] %s → %s (%s) | %s\n", now, selectedPID, core.StatusLabel(old), core.StatusLabel(new), reason, snapshot)
 	} else {
-		fmt.Fprintf(f, "%s [all] %s → %s (%s) | %s\n", now, statusLabel(old), statusLabel(new), reason, snapshot)
+		fmt.Fprintf(f, "%s [all] %s → %s (%s) | %s\n", now, core.StatusLabel(old), core.StatusLabel(new), reason, snapshot)
 	}
 }
 
@@ -297,7 +250,7 @@ func sendNotification(title, message string) {
 }
 
 func refreshSessionMenu() {
-	sessions := ListClaudeSessions()
+	sessions := detect.ListClaudeSessions()
 
 	// Sort PIDs ascending
 	pids := make([]int, 0, len(sessions))
@@ -324,7 +277,7 @@ func refreshSessionMenu() {
 		if i < limit {
 			pid := pids[i]
 			color := sessions[pid]
-			project := sessionWorkDir(pid)
+			project := detect.SessionWorkDir(pid)
 			sessionSlots[i].pid = pid
 			sessionSlots[i].item.SetTitle(fmt.Sprintf("%s (PID %d) - %s", project, pid, color))
 			if pid == selectedPID {
@@ -347,52 +300,28 @@ func refreshSessionMenu() {
 	}
 }
 
-func detectStatus() (Status, string) {
+func detectStatus() (core.Status, string) {
 	// If monitoring a specific session, return its status directly
 	if selectedPID != 0 {
-		color, fresh := ReadSessionState(selectedPID)
+		color, fresh := detect.ReadSessionState(selectedPID)
 		if fresh {
-			switch color {
-			case "green":
-				return StatusIdle, "hook: green"
-			case "blue":
-				return StatusWorking, "hook: blue"
-			case "yellow":
-				return StatusSubmitted, "hook: yellow"
-			case "orange":
-				return StatusToolUse, "hook: orange"
-			case "red":
-				return StatusBlocked, "hook: red"
-			default:
-				return StatusIdle, "hook: " + color
-			}
+			s := core.ParseHookColor(color)
+			return s, "hook: " + color
 		}
 		// Session died — auto-reset to monitor-all and fall through
 		selectedPID = 0
 	}
 
-	runningPIDs := ListClaudeProcesses()
+	runningPIDs := detect.ListClaudeProcesses()
 	if len(runningPIDs) == 0 {
-		return StatusStopped, "no claude process"
+		return core.StatusStopped, "no claude process"
 	}
 
-	hookState, _ := ReadHookState(runningPIDs)
+	hookState, _ := detect.ReadHookState(runningPIDs)
 	if hookState == "" {
-		return StatusIdle, "no hook state"
+		return core.StatusIdle, "no hook state"
 	}
 
-	switch hookState {
-	case "green":
-		return StatusIdle, "hook: green"
-	case "blue":
-		return StatusWorking, "hook: blue"
-	case "yellow":
-		return StatusSubmitted, "hook: yellow"
-	case "orange":
-		return StatusToolUse, "hook: orange"
-	case "red":
-		return StatusBlocked, "hook: red"
-	default:
-		return StatusIdle, "hook: " + hookState
-	}
+	s := core.ParseHookColor(hookState)
+	return s, "hook: " + hookState
 }

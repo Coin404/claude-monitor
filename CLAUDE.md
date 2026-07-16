@@ -125,10 +125,22 @@ out := bytes.TrimRight(buf.Bytes(), "\n")
 ## Key files
 - `claude-monitor/detector.go` — hook writing, process/proxy/dialog detection, state file reading
 - `claude-monitor/main.go` — systray UI, status detection loop, color constants
-- `claude-monitor/a11y_darwin.go` — CGWindow-based dialog detection (HasDialogWindow, used in fallback)
+- `claude-monitor/stats.go` — daily status duration tracking, HTML donut chart generation
+- `claude-monitor/stats_window.swift` — standalone Swift helper that renders stats HTML in a native WKWebView window
+- `claude-monitor/icon.go` — tray circle icon generation
+- `claude-monitor/activate_darwin.go` — native NSRunningApplication window activation
 - `~/.claude/settings.json` — user settings (hooks written here)
 - `~/.claude/settings.local.json` — local settings (hooks also written here)
-- `/tmp/claude-monitor-state` — state file updated by hooks, read by detectStatus
+- `/tmp/claude-monitor-state-$PID` — per-session state files updated by hooks, read by detectStatus
+
+## Stats tracking
+- `StatsTracker` in `stats.go` tracks time spent in each status per day
+- `RecordStatusChange(newStatus)` called from main detection loop on every status transition
+- Data persisted to `log/stats-YYYY-MM-DD.json` on every change (minimizes data loss)
+- `CleanupOldStats(7)` removes files older than 7 days at startup
+- "View Stats Chart" menu item opens a native macOS WKWebView window with an SVG donut chart
+- The chart window is rendered by a standalone Swift helper (`stats_window.swift`) compiled and invoked as a subprocess — avoids cgo/WKWebView threading issues
+- `FlushCurrentSession()` called in `onExit()` to save the final status segment before quit
 
 ## Timing
 - `pollInterval = 30ms` — main detection loop

@@ -6,6 +6,10 @@ echo "==> Building claude-monitor..."
 go build -o "Novascope.app/Contents/MacOS/claude-monitor" .
 echo "==> Build OK"
 
+echo "==> Building stats helper..."
+swiftc -o "Novascope.app/Contents/MacOS/novascope-stats-helper" "helpers/stats_window.swift"
+echo "==> Stats helper OK"
+
 echo "==> Killing old process..."
 pkill -f "Novascope.app/Contents/MacOS/claude-monitor" 2>/dev/null || true
 pkill -f "claude-monitor/claude-monitor" 2>/dev/null || true
