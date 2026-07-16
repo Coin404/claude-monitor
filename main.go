@@ -184,8 +184,7 @@ func onReady() {
 				// Bring the selected session's window to front
 				if pid != 0 {
 					appName := FindTerminalApp(pid)
-					projectPath := sessionWorkPath(pid)
-					ActivateTerminal(appName, projectPath)
+					ActivateTerminal(appName)
 				}
 			}
 		}()

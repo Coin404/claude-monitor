@@ -513,18 +513,15 @@ func FindTerminalApp(pid int) string {
 	return ""
 }
 
-// ActivateTerminal uses osascript to bring the host application to the
-// foreground. If projectDir is not empty, it first tries to use
-// "open -a AppName projectDir" which is the most reliable way to
-// focus the correct window in multi-window IDEs.
-func ActivateTerminal(appName, projectDir string) error {
-	// Best effort: use "open -a" with project directory to focus the
-	// specific project window in multi-window IDEs
-	if projectDir != "" && appName != "" {
-		_, err := exec.Command("open", "-a", appName, projectDir).Output()
-		if err == nil {
-			return nil
-		}
+// ActivateTerminal brings the host terminal/IDE application to the
+// foreground. It first tries the native NSRunningApplication API which
+// provides a smooth macOS Space transition animation. Falls back to
+// osascript methods if native activation is unavailable.
+func ActivateTerminal(appName string) error {
+	// Primary: native NSRunningApplication activation with smooth
+	// Space transition animation (no abrupt jump).
+	if appName != "" && activateAppSmoothly(appName) {
+		return nil
 	}
 
 	// Fallback 1: set frontmost via System Events
