@@ -19,8 +19,6 @@ import (
 //	UserPromptSubmit              → blue   (用户提交 prompt，开始思考)
 //	PreToolUse (AskUserQuestion)  → red    (需要用户回答)
 //	PostToolUse (AskUserQuestion) → blue   (回答完成，继续思考)
-//	PreToolUse (Bash)             → red    (需要用户授权命令)
-//	PostToolUse (Bash)            → blue   (授权完成，继续思考)
 //	PostToolUse (generic)          → blue   (授权完成后恢复，无 matcher)
 //	PermissionRequest             → red    (系统权限弹窗)
 //	Stop                          → green  (完成，等待用户)
@@ -126,28 +124,10 @@ func writeHooksTo(settingsPath string) error {
 					},
 				},
 			},
-			map[string]any{
-				"matcher": "Bash",
-				"hooks": []any{
-					map[string]any{
-						"type":    "command",
-						"command": cmd("red"),
-					},
-				},
-			},
 		},
 		"PostToolUse": {
 			map[string]any{
 				"matcher": "AskUserQuestion",
-				"hooks": []any{
-					map[string]any{
-						"type":    "command",
-						"command": cmd("blue"),
-					},
-				},
-			},
-			map[string]any{
-				"matcher": "Bash",
 				"hooks": []any{
 					map[string]any{
 						"type":    "command",

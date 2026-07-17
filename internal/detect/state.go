@@ -48,23 +48,31 @@ func sessionWorkPath(pid int) string {
 }
 
 // sessionColor reads the state file for a PID and returns its color.
-// If the state file is stale (>10s) or missing, returns "green" — an
-// idle session is the safe default when we can't determine state.
+// If the state file is missing but the process is running, defaults to
+// "green". If the state file exists but is stale, the last-known color
+// is still returned — the process is running, no new hook means no
+// state change.
 func sessionColor(pid int) string {
 	f := stateFileBase + "-" + strconv.Itoa(pid)
-	info, err := os.Stat(f)
+	_, err := os.Stat(f)
 	if err != nil {
-		return "green"
-	}
-	if time.Since(info.ModTime()) >= 10*time.Second {
+		if isProcessRunning(pid) {
+			return "green"
+		}
 		return "green"
 	}
 	data, err := os.ReadFile(f)
 	if err != nil {
+		if isProcessRunning(pid) {
+			return "green"
+		}
 		return "green"
 	}
 	color := strings.TrimSpace(string(data))
 	if color == "" {
+		if isProcessRunning(pid) {
+			return "green"
+		}
 		return "green"
 	}
 	return color
