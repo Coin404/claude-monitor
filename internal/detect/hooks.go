@@ -17,9 +17,10 @@ import (
 //
 //	SessionStart                  → green  (会话启动，空闲等待)
 //	UserPromptSubmit              → blue   (用户提交 prompt，开始思考)
+//	PreToolUse (generic)          → orange (执行工具：bash/py/webfetch等)
 //	PreToolUse (AskUserQuestion)  → red    (需要用户回答)
+//	PostToolUse (generic)         → blue   (工具执行完，回到思考/生成)
 //	PostToolUse (AskUserQuestion) → blue   (回答完成，继续思考)
-//	PostToolUse (generic)          → blue   (授权完成后恢复，无 matcher)
 //	PermissionRequest             → red    (系统权限弹窗)
 //	Stop                          → green  (完成，等待用户)
 func WriteHooks() error {
@@ -115,6 +116,16 @@ func writeHooksTo(settingsPath string) error {
 			},
 		}},
 		"PreToolUse": {
+			// Generic first (matches all tools: bash, python, webfetch, etc.) → orange
+			map[string]any{
+				"hooks": []any{
+					map[string]any{
+						"type":    "command",
+						"command": cmd("orange"),
+					},
+				},
+			},
+			// AskUserQuestion second (overwrites orange with red)
 			map[string]any{
 				"matcher": "AskUserQuestion",
 				"hooks": []any{
@@ -126,8 +137,8 @@ func writeHooksTo(settingsPath string) error {
 			},
 		},
 		"PostToolUse": {
+			// Generic first (matches all tools) → blue (tool done, back to thinking)
 			map[string]any{
-				"matcher": "AskUserQuestion",
 				"hooks": []any{
 					map[string]any{
 						"type":    "command",
@@ -135,7 +146,9 @@ func writeHooksTo(settingsPath string) error {
 					},
 				},
 			},
+			// AskUserQuestion second (overwrites green with blue → continue thinking)
 			map[string]any{
+				"matcher": "AskUserQuestion",
 				"hooks": []any{
 					map[string]any{
 						"type":    "command",

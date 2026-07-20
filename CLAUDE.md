@@ -63,11 +63,15 @@ Key rules:
 - **`Start` is deprecated** — use `SessionStart` instead. `Start` causes "Invalid key in record" error on newer Claude Code versions
 - **Entire settings.json is skipped if any hook has errors** — one bad hook breaks everything
 
-## Hook execution order and PreToolUse pitfall
+## Hook execution order and PreToolUse behavior
 
-**CRITICAL**: When multiple PreToolUse entries match the same tool, the less specific one can overwrite the more specific one:
-- Having both a generic PreToolUse (no matcher, matches all tools) AND a specific one (`matcher: "AskUserQuestion"`) causes the generic to overwrite the specific → AskUserQuestion shows wrong color
-- **Solution**: Only have the AskUserQuestion matcher in PreToolUse. Do NOT add a generic PreToolUse entry. Follow traffic-light's pattern.
+When multiple PreToolUse/PostToolUse entries match the same tool, **later entries in the array overwrite earlier ones** (they write to the same state file). We use this to our advantage:
+- Generic entries (no matcher) are placed **first** → set the default tool color
+- AskUserQuestion entries are placed **last** → overwrite with the specific color
+
+This ensures:
+- Regular tools (bash, webfetch, etc.): PreToolUse → orange, PostToolUse → blue
+- AskUserQuestion: PreToolUse → orange then red (= red), PostToolUse → blue (= blue, same as generic)
 
 ## Valid hook events (current Claude Code)
 - `SessionStart` — session begins (NOT `Start`)
@@ -90,24 +94,25 @@ Key rules:
 | 灰   | 未运行 | Claude Code 没有打开 |
 | 绿   | 空闲 | 完成任务/等待用户输入 |
 | 蓝   | 思考中 | Claude 正在思考/生成输出 |
+| 橙   | 工具调用 | 执行 bash/python/webfetch 等工具 |
 | 红   | 等待确认 | 弹出询问权限/确认方案（AskUserQuestion、PermissionRequest）|
 
 ### Hook color mapping
 ```
 SessionStart                  → green  (会话启动，空闲等待)
 UserPromptSubmit              → blue   (用户提交 prompt，开始思考)
-PreToolUse(AskUserQuestion)   → red    (等待用户回答)
-PostToolUse(AskUserQuestion)  → blue   (回答完成，继续思考)
+PreToolUse(generic)           → orange (执行工具：bash/py/webfetch等)
+PreToolUse(AskUserQuestion)   → red    (覆盖 orange，等待用户回答)
+PostToolUse(generic)          → blue   (工具执行完，回到思考/生成)
+PostToolUse(AskUserQuestion)  → blue   (同上，确认完成继续思考)
 PermissionRequest             → red    (等待用户授权)
 Stop                          → green  (完成，等待用户)
 ```
 
-### 为什么没有黄色（工具调用）
-通用 PreToolUse/PostToolUse（无 matcher）会与 AskUserQuestion 的红色冲突：
-- PreToolUse 无 matcher → yellow 会覆盖 AskUserQuestion → red
-- PostToolUse 无 matcher → yellow 会在非 AskUserQuestion 的工具完成后触发，干扰其他状态
-
-因此工具调用期间保持蓝色（思考中），不做区分。但 PostToolUse(AskUserQuestion) 已单独配置，用于在用户回答后立即切回绿色。
+### 为什么 AskUserQuestion 放在数组后面
+通用 PreToolUse（无 matcher）和 AskUserQuestion 同时匹配时，后执行的会覆盖先执行的。把 AskUserQuestion 放在数组**后面**，确保它后执行覆盖通用条目：
+- PreToolUse: [generic→orange, AskUserQuestion→red] → AskUserQuestion 时最终为 red
+- PostToolUse: [generic→blue, AskUserQuestion→blue] → 都是 blue，无需覆盖
 
 ## JSON encoding in Go
 
