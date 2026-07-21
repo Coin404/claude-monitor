@@ -212,11 +212,11 @@ const statsHelperName = "novascope-stats-helper"
 
 // findHelperPath returns the path to the compiled stats helper binary.
 func findHelperPath() string {
-	root := core.FindProjectRoot()
-	if root == "/tmp" {
+	dir := core.ExecutableDir()
+	if dir == "/tmp" {
 		return ""
 	}
-	return filepath.Join(root, "Novascope.app", "Contents", "MacOS", statsHelperName)
+	return filepath.Join(dir, statsHelperName)
 }
 
 // ensureStatsHelper compiles the Swift helper if it doesn't exist yet.
@@ -229,6 +229,9 @@ func ensureStatsHelper() (string, error) {
 		return dest, nil // already compiled
 	}
 	root := core.FindProjectRoot()
+	if root == "/tmp" {
+		return "", fmt.Errorf("cannot find source: project root not found (pre-compiled binary not available)")
+	}
 	src := filepath.Join(root, "helpers", "stats_window.swift")
 	if _, err := os.Stat(src); os.IsNotExist(err) {
 		return "", fmt.Errorf("stats_window.swift not found at %s", src)

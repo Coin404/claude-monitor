@@ -1,6 +1,8 @@
 # Built binary
 claude-monitor
 Novascope.app/Contents/MacOS/claude-monitor
+Novascope.app/Contents/MacOS/novascope-stats-helper
+Novascope.app/Contents/MacOS/novascope-panel-helper
 
 # Code signature
 Novascope.app/Contents/_CodeSignature/
@@ -17,7 +19,9 @@ Novascope.app/Contents/Resources/
 *.swp
 *.swo
 
-# Logs
+# Logs and distribution
 log/
+dist/
+
 # CocoIndex Code (ccc)
 /.cocoindex_code/

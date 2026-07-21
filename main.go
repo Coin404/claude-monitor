@@ -382,13 +382,16 @@ const panelHelperName = "novascope-panel-helper"
 
 // ensurePanelHelper compiles the SwiftUI sessions panel helper if needed.
 func ensurePanelHelper() (string, error) {
-	root := core.FindProjectRoot()
-	if root == "/tmp" {
-		return "", fmt.Errorf("cannot determine project root")
+	dest := filepath.Join(core.ExecutableDir(), panelHelperName)
+	if dest == "" || dest == "/tmp/"+panelHelperName {
+		return "", fmt.Errorf("cannot determine executable directory")
 	}
-	dest := filepath.Join(root, "Novascope.app", "Contents", "MacOS", panelHelperName)
 	if _, err := os.Stat(dest); err == nil {
 		return dest, nil
+	}
+	root := core.FindProjectRoot()
+	if root == "/tmp" {
+		return "", fmt.Errorf("cannot find source: project root not found (pre-compiled binary not available)")
 	}
 	src := filepath.Join(root, "helpers", "sessions_panel.swift")
 	if _, err := os.Stat(src); os.IsNotExist(err) {

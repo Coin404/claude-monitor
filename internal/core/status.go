@@ -122,9 +122,30 @@ func FindProjectRoot() string {
 	return "/tmp"
 }
 
+// ExecutableDir returns the directory containing the running executable.
+func ExecutableDir() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return "/tmp"
+	}
+	return filepath.Dir(exe)
+}
+
+// AppSupportDir returns the Novascope app support directory
+// (~/Library/Application Support/Novascope), creating it if needed.
+func AppSupportDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "/tmp"
+	}
+	dir := filepath.Join(home, "Library", "Application Support", "Novascope")
+	os.MkdirAll(dir, 0755)
+	return dir
+}
+
 // LogPath returns the path to the log file.
 func LogPath() string {
-	return filepath.Join(FindProjectRoot(), "log", "claude-monitor.log")
+	return filepath.Join(AppSupportDir(), "claude-monitor.log")
 }
 
 // EnsureLogDir creates the log directory if it doesn't exist.
