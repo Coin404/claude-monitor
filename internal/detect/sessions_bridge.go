@@ -1,0 +1,82 @@
+package detect
+
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"sort"
+	"time"
+
+	"claude-monitor/internal/core"
+)
+
+const sessionsSnapshotPath = "/tmp/claude-monitor-sessions.json"
+
+// SessionInfo holds the display data for one Claude Code session.
+type SessionInfo struct {
+	PID         int    `json:"pid"`
+	Color       string `json:"color"`
+	Project     string `json:"project"`
+	Terminal    string `json:"terminal"`
+	StatusKey   string `json:"statusKey"`
+	StatusLabel string `json:"statusLabel"`
+	ColorHex    string `json:"colorHex"`
+}
+
+// SessionsSnapshot is the JSON payload written to /tmp/claude-monitor-sessions.json.
+type SessionsSnapshot struct {
+	Sessions  []SessionInfo `json:"sessions"`
+	Timestamp string        `json:"timestamp"`
+	Count     int           `json:"count"`
+}
+
+// WriteSessionsSnapshot collects session data from all running Claude
+// processes and writes it atomically to /tmp/claude-monitor-sessions.json.
+// The SwiftUI panel reads this file to display session cards.
+func WriteSessionsSnapshot() {
+	sessions := ListClaudeSessions()
+	infos := make([]SessionInfo, 0, len(sessions))
+
+	for pid, color := range sessions {
+		status := core.ParseHookColor(color)
+		key := core.StatusKey(status)
+		info := SessionInfo{
+			PID:         pid,
+			Color:       color,
+			Project:     SessionWorkDir(pid),
+			Terminal:    FindTerminalApp(pid),
+			StatusKey:   key,
+			StatusLabel: core.StatusDisplayNames[key],
+			ColorHex:    core.StatusColorMap[key],
+		}
+		infos = append(infos, info)
+	}
+
+	// Sort by PID ascending for stable card order
+	sort.Slice(infos, func(i, j int) bool {
+		return infos[i].PID < infos[j].PID
+	})
+
+	snap := SessionsSnapshot{
+		Sessions:  infos,
+		Timestamp: time.Now().Format(time.RFC3339),
+		Count:     len(infos),
+	}
+
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(&snap); err != nil {
+		return
+	}
+
+	// Atomic write: temp file + rename to avoid partial reads
+	tmpPath := sessionsSnapshotPath + ".tmp"
+	if err := os.WriteFile(tmpPath, buf.Bytes(), 0644); err != nil {
+		return
+	}
+	if err := os.Rename(tmpPath, sessionsSnapshotPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return
+	}
+}

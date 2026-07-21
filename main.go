@@ -5,7 +5,9 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -35,6 +37,7 @@ var (
 	lastNotifyTime  time.Time // debounce notifications
 	startupTime     time.Time // suppresses notification during startup grace period
 	tracker         *stats.Tracker
+	panelHelperPID  int // PID of sessions panel helper (0 = not running)
 )
 
 // sessionStateSnapshot returns a string summarizing all current session
@@ -92,6 +95,7 @@ func onReady() {
 	tracker = stats.NewTracker()
 	stats.CleanupOldStats(7)
 	statsChartItem := systray.AddMenuItem("View Stats Chart", "Open statistics chart in a native window")
+	sessionsPanelItem := systray.AddMenuItem("Show Sessions Panel", "Open sessions overview in a native window")
 	systray.AddSeparator()
 
 	quitItem := systray.AddMenuItem("Quit", "Quit Novascope")
@@ -161,6 +165,13 @@ func onReady() {
 		}
 	}()
 
+	// Handle sessions panel click
+	go func() {
+		for range sessionsPanelItem.ClickedCh {
+			launchSessionsPanel()
+		}
+	}()
+
 	// Handle poll interval changes
 	for ms, item := range intervalItems {
 		ms := ms
@@ -187,6 +198,37 @@ func onReady() {
 			case <-ticker.C:
 				refreshSessionMenu()
 			}
+		}
+	}()
+
+	// Write sessions snapshot JSON for the SwiftUI panel every 100ms
+	go func() {
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		for range ticker.C {
+			detect.WriteSessionsSnapshot()
+		}
+	}()
+
+	// Watch for selected PID changes from the SwiftUI sessions panel.
+	// The panel writes /tmp/claude-monitor-selected-pid when a card is clicked.
+	const selectedPIDPath = "/tmp/claude-monitor-selected-pid"
+	go func() {
+		var lastRead int
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+		for range ticker.C {
+			data, err := os.ReadFile(selectedPIDPath)
+			if err != nil {
+				continue
+			}
+			pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+			if err != nil || pid == lastRead {
+				continue
+			}
+			lastRead = pid
+			selectedPID = pid
+			refreshSessionMenu()
 		}
 	}()
 
@@ -220,6 +262,13 @@ func onReady() {
 
 func onExit() {
 	tracker.FlushCurrentSession()
+	// Kill the sessions panel helper if it's running
+	if panelHelperPID != 0 {
+		if p, err := os.FindProcess(panelHelperPID); err == nil {
+			_ = p.Kill()
+		}
+		panelHelperPID = 0
+	}
 }
 
 func logStatusChange(old, new core.Status, reason string) {
@@ -326,4 +375,64 @@ func detectStatus() (core.Status, string) {
 
 	s := core.ParseHookColor(hookState)
 	return s, "hook: " + hookState
+}
+
+// panelHelperName is the compiled Swift helper binary for the sessions panel.
+const panelHelperName = "novascope-panel-helper"
+
+// ensurePanelHelper compiles the SwiftUI sessions panel helper if needed.
+func ensurePanelHelper() (string, error) {
+	root := core.FindProjectRoot()
+	if root == "/tmp" {
+		return "", fmt.Errorf("cannot determine project root")
+	}
+	dest := filepath.Join(root, "Novascope.app", "Contents", "MacOS", panelHelperName)
+	if _, err := os.Stat(dest); err == nil {
+		return dest, nil
+	}
+	src := filepath.Join(root, "helpers", "sessions_panel.swift")
+	if _, err := os.Stat(src); os.IsNotExist(err) {
+		return "", fmt.Errorf("sessions_panel.swift not found at %s", src)
+	}
+	cmd := exec.Command("swiftc", "-o", dest, src)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("swiftc: %w\n%s", err, string(output))
+	}
+	return dest, nil
+}
+
+// launchSessionsPanel starts or activates the sessions panel window.
+// If the helper is already running, it brings the window to front.
+// Otherwise it compiles (if needed) and launches a new instance.
+func launchSessionsPanel() {
+	// Check if existing helper is still alive
+	if panelHelperPID != 0 {
+		process, err := os.FindProcess(panelHelperPID)
+		if err == nil {
+			err = process.Signal(syscall.Signal(0))
+		}
+		if err == nil {
+			// Process exists — kill and restart to bring window to front
+			_ = process.Kill()
+		}
+		panelHelperPID = 0
+	}
+
+	helper, err := ensurePanelHelper()
+	if err != nil {
+		return
+	}
+	cmd := exec.Command(helper)
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if err := cmd.Start(); err != nil {
+		return
+	}
+	panelHelperPID = cmd.Process.Pid
+	// Don't Wait() — let the helper run independently
+	go func() {
+		_ = cmd.Wait()
+		panelHelperPID = 0
+	}()
 }

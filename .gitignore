@@ -19,3 +19,5 @@ Novascope.app/Contents/Resources/
 
 # Logs
 log/
+# CocoIndex Code (ccc)
+/.cocoindex_code/

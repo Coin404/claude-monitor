@@ -128,15 +128,22 @@ out := bytes.TrimRight(buf.Bytes(), "\n")
 ```
 
 ## Key files
-- `claude-monitor/detector.go` — hook writing, process/proxy/dialog detection, state file reading
-- `claude-monitor/main.go` — systray UI, status detection loop, color constants
-- `claude-monitor/stats.go` — daily status duration tracking, HTML donut chart generation
-- `claude-monitor/stats_window.swift` — standalone Swift helper that renders stats HTML in a native WKWebView window
-- `claude-monitor/icon.go` — tray circle icon generation
-- `claude-monitor/activate_darwin.go` — native NSRunningApplication window activation
+- `internal/detect/hooks.go` — hook writing to settings.json/settings.local.json
+- `internal/detect/process.go` — Claude process listing, blocked PID detection
+- `internal/detect/state.go` — per-session state file reading, session listing
+- `internal/detect/terminal.go` — terminal app detection, window activation
+- `internal/detect/activate_darwin.go` — native NSRunningApplication window activation (cgo)
+- `internal/detect/sessions_bridge.go` — writes session data to `/tmp/claude-monitor-sessions.json` for the SwiftUI panel
+- `internal/core/status.go` — status enum, color constants, display names, parsing
+- `internal/icon/icon.go` — tray circle icon generation
+- `internal/stats/tracker.go` — daily status duration tracking, HTML donut chart, stats helper management
+- `main.go` — systray UI, status detection loop, session panel launch, 200ms JSON snapshot goroutine
+- `helpers/stats_window.swift` — standalone Swift helper that renders stats HTML in a native WKWebView window
+- `helpers/sessions_panel.swift` — standalone SwiftUI glass-style sessions overview panel
 - `~/.claude/settings.json` — user settings (hooks written here)
 - `~/.claude/settings.local.json` — local settings (hooks also written here)
 - `/tmp/claude-monitor-state-$PID` — per-session state files updated by hooks, read by detectStatus
+- `/tmp/claude-monitor-sessions.json` — session data bridge written by Go, polled by SwiftUI panel
 
 ## Stats tracking
 - `StatsTracker` in `stats.go` tracks time spent in each status per day
@@ -147,9 +154,20 @@ out := bytes.TrimRight(buf.Bytes(), "\n")
 - The chart window is rendered by a standalone Swift helper (`stats_window.swift`) compiled and invoked as a subprocess — avoids cgo/WKWebView threading issues
 - `FlushCurrentSession()` called in `onExit()` to save the final status segment before quit
 
+## Sessions panel
+- "Show Sessions Panel" menu item launches a native SwiftUI glass-style window (`novascope-panel-helper`)
+- Go writes `/tmp/claude-monitor-sessions.json` every 200ms via `WriteSessionsSnapshot()` (in `sessions_bridge.go`)
+- SwiftUI panel polls the JSON file every 200ms, updates session cards reactively
+- Session cards show: colored dot, project name, terminal app, status label with color-coded badge
+- Click a session card → `NSWorkspace.activate(options: .activateAllWindows)` activates the terminal/IDE
+- Window: `.floating` level, `.hudWindow` glass material, `.accessory` activation policy (no Dock icon)
+- Panel helper auto-compiled on first launch via `ensurePanelHelper()` (mirrors `ensureStatsHelper()` pattern)
+- Singleton behavior: clicking menu item while panel is open kills and relaunches to bring window to front
+
 ## Timing
-- `pollInterval = 30ms` — main detection loop
-- All detection functions are real-time (no caching) — `CheckClaudeProcess()`, `CheckProxyActivity()`, `HasDialogWindow()` run on every poll tick
+- `pollInterval = 10ms` — main detection loop (configurable: 5/10/30/50ms)
+- JSON sessions snapshot written every 200ms for the SwiftUI panel
+- All detection functions are real-time (no caching) — `ListClaudeProcesses()`, `ReadHookState()`, `ReadSessionState()` run on every poll tick
 - Hook state considered "fresh" if modified within 10 seconds
 
 ## Hooks require Claude Code restart
