@@ -57,7 +57,6 @@ func statsPathForDay(day string) string {
 // exists. lastChangeTime is set to now so that the first status change
 // only accumulates a tiny (near-zero) duration.
 func NewTracker() *Tracker {
-	core.EnsureLogDir()
 	today := time.Now().Format("2006-01-02")
 	st := &Tracker{
 		day:            today,

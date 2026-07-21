@@ -147,9 +147,3 @@ func AppSupportDir() string {
 func LogPath() string {
 	return filepath.Join(AppSupportDir(), "claude-monitor.log")
 }
-
-// EnsureLogDir creates the log directory if it doesn't exist.
-func EnsureLogDir() {
-	dir := filepath.Dir(LogPath())
-	os.MkdirAll(dir, 0755)
-}

@@ -40,25 +40,6 @@ var (
 	panelHelperPID  int // PID of sessions panel helper (0 = not running)
 )
 
-// sessionStateSnapshot returns a string summarizing all current session
-// states, e.g. "sessions: 12345=green, 12346=yellow".
-func sessionStateSnapshot() string {
-	sessions := detect.ListClaudeSessions()
-	if len(sessions) == 0 {
-		return "sessions: none"
-	}
-	pids := make([]int, 0, len(sessions))
-	for pid := range sessions {
-		pids = append(pids, pid)
-	}
-	sort.Ints(pids)
-	parts := make([]string, 0, len(pids))
-	for _, pid := range pids {
-		parts = append(parts, fmt.Sprintf("%d=%s", pid, sessions[pid]))
-	}
-	return "sessions: " + strings.Join(parts, ", ")
-}
-
 func main() {
 	statusIcons = map[core.Status][]byte{
 		core.StatusStopped:   icon.GenerateCircleIcon(core.ColorGray),
@@ -77,7 +58,6 @@ func main() {
 }
 
 func onReady() {
-	core.EnsureLogDir()
 	startupTime = time.Now()
 
 	rewriteItem := systray.AddMenuItem("Re-write Hooks", "Re-write Claude Code hook configuration")
@@ -93,7 +73,7 @@ func onReady() {
 
 	systray.AddSeparator()
 	tracker = stats.NewTracker()
-	stats.CleanupOldStats(7)
+	stats.CleanupOldStats(1)
 	statsChartItem := systray.AddMenuItem("View Stats Chart", "Open statistics chart in a native window")
 	sessionsPanelItem := systray.AddMenuItem("Show Sessions Panel", "Open sessions overview in a native window")
 	systray.AddSeparator()
@@ -235,7 +215,7 @@ func onReady() {
 	go func() {
 		for {
 			time.Sleep(time.Duration(atomic.LoadInt32(&pollIntervalMs)) * time.Millisecond)
-			detected, reason := detectStatus()
+			detected, _ := detectStatus()
 			if detected != currentStatus {
 				// Notify only when entering blocked (red), suppress
 				// during the first 3s after startup to avoid alerts
@@ -251,7 +231,6 @@ func onReady() {
 					}
 					sendNotification("Novascope", project+" needs your attention")
 				}
-				logStatusChange(currentStatus, detected, reason)
 				tracker.RecordStatusChange(detected)
 				currentStatus = detected
 				systray.SetIcon(statusIcons[currentStatus])
@@ -268,22 +247,6 @@ func onExit() {
 			_ = p.Kill()
 		}
 		panelHelperPID = 0
-	}
-}
-
-func logStatusChange(old, new core.Status, reason string) {
-	f, err := os.OpenFile(core.LogPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return
-	}
-	defer func() { _ = f.Close() }()
-
-	now := time.Now().Format("2006-01-02 15:04:05")
-	snapshot := sessionStateSnapshot()
-	if selectedPID != 0 {
-		_, _ = fmt.Fprintf(f, "%s [PID %d] %s → %s (%s) | %s\n", now, selectedPID, core.StatusLabel(old), core.StatusLabel(new), reason, snapshot)
-	} else {
-		_, _ = fmt.Fprintf(f, "%s [all] %s → %s (%s) | %s\n", now, core.StatusLabel(old), core.StatusLabel(new), reason, snapshot)
 	}
 }
 
