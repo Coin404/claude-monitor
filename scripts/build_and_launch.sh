@@ -3,6 +3,7 @@ set -e
 cd "$(dirname "$0")/.."
 
 echo "==> Building claude-monitor..."
+rm -f "Novascope.app/Contents/MacOS/claude-monitor" "Novascope.app/Contents/MacOS/novascope-stats-helper" "Novascope.app/Contents/MacOS/novascope-panel-helper"
 go build -o "Novascope.app/Contents/MacOS/claude-monitor" .
 echo "==> Build OK"
 

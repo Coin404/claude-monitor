@@ -14,16 +14,25 @@ echo "==> Creating app bundle structure..."
 mkdir -p "${APP_NAME}/Contents/MacOS"
 mkdir -p "${APP_NAME}/Contents/Resources"
 
-echo "==> Building claude-monitor..."
-go build -o "${APP_NAME}/Contents/MacOS/claude-monitor" .
+echo "==> Building claude-monitor (universal binary)..."
+CGO_ENABLED=1 GOARCH=arm64 go build -o /tmp/claude-monitor-arm64 .
+CGO_ENABLED=1 GOARCH=amd64 go build -o /tmp/claude-monitor-amd64 .
+lipo -create /tmp/claude-monitor-arm64 /tmp/claude-monitor-amd64 -output "${APP_NAME}/Contents/MacOS/claude-monitor"
+rm /tmp/claude-monitor-arm64 /tmp/claude-monitor-amd64
 echo "==> Go binary OK"
 
-echo "==> Building stats helper..."
-swiftc -o "${APP_NAME}/Contents/MacOS/novascope-stats-helper" "helpers/stats_window.swift"
+echo "==> Building stats helper (universal)..."
+swiftc -target arm64-apple-macos11.0 -o /tmp/stats-arm64 "helpers/stats_window.swift"
+swiftc -target x86_64-apple-macos11.0 -o /tmp/stats-amd64 "helpers/stats_window.swift"
+lipo -create /tmp/stats-arm64 /tmp/stats-amd64 -output "${APP_NAME}/Contents/MacOS/novascope-stats-helper"
+rm /tmp/stats-arm64 /tmp/stats-amd64
 echo "==> Stats helper OK"
 
-echo "==> Building sessions panel helper..."
-swiftc -o "${APP_NAME}/Contents/MacOS/novascope-panel-helper" "helpers/sessions_panel.swift"
+echo "==> Building sessions panel helper (universal)..."
+swiftc -target arm64-apple-macos11.0 -o /tmp/panel-arm64 "helpers/sessions_panel.swift"
+swiftc -target x86_64-apple-macos11.0 -o /tmp/panel-amd64 "helpers/sessions_panel.swift"
+lipo -create /tmp/panel-arm64 /tmp/panel-amd64 -output "${APP_NAME}/Contents/MacOS/novascope-panel-helper"
+rm /tmp/panel-arm64 /tmp/panel-amd64
 echo "==> Sessions panel helper OK"
 
 echo "==> Creating Info.plist..."

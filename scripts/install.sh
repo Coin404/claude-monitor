@@ -1,22 +1,40 @@
 #!/bin/bash
 set -e
 
-APP="Novascope.app"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+APP="${SCRIPT_DIR}/Novascope.app"
 
-echo "==> Installing Novascope..."
+echo "========================================"
+echo "  Novascope - Claude Code Monitor"
+echo "========================================"
+echo ""
 
-# Move to Applications
-if [ -d "/Applications/${APP}" ]; then
-    echo "Removing old version..."
-    rm -rf "/Applications/${APP}"
+if [ ! -d "${APP}" ]; then
+    echo "ERROR: Novascope.app not found next to this script."
+    echo "Make sure install.sh is in the same folder as Novascope.app"
+    exit 1
 fi
-cp -R "${APP}" /Applications/
 
-# Remove quarantine flag (Gatekeeper bypass)
-xattr -cr "/Applications/${APP}"
+echo "==> Removing quarantine flag..."
+xattr -cr "${APP}"
 
 echo "==> Launching Novascope..."
-open "/Applications/${APP}"
+open "${APP}"
 
-echo "==> Done! Novascope is running in the menu bar."
-echo "    If you don't see the icon, check the menu bar."
+echo ""
+echo "========================================"
+echo "  Done!"
+echo ""
+echo "  Novascope runs in the MENU BAR (top-right)."
+echo "  Look for the colored dot icon."
+echo ""
+echo "  If you don't see it, check:"
+echo "  1. Is Claude Code running? The dot turns"
+echo "     gray when no Claude session is active."
+echo "  2. System Settings > Control Center >"
+echo "     Menu Bar Only apps"
+echo ""
+echo "  To auto-start on login:"
+echo "  Drag Novascope.app to:"
+echo "  System Settings > General > Login Items"
+echo "========================================"

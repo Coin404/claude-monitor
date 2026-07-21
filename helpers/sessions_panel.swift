@@ -31,6 +31,7 @@ final class SessionsViewModel: ObservableObject {
     @Published var sessions: [SessionInfo] = []
     @Published var lastUpdate: Date?
     @Published var isStale = false
+    private var hasEverHadSessions = false
 
     private var timer: Timer?
     private let jsonPath = "/tmp/claude-monitor-sessions.json"
@@ -55,9 +56,19 @@ final class SessionsViewModel: ObservableObject {
         if newSessions != sessions {
             sessions = newSessions
         }
+        if !newSessions.isEmpty {
+            hasEverHadSessions = true
+        }
         lastUpdate = Date()
 
-        // Check staleness: treat as stale if no update for 30s and there are sessions
+        // Auto-close when all sessions end (only after we've seen at least one)
+        if hasEverHadSessions && newSessions.isEmpty {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                NSApp.stop(nil)
+            }
+        }
+
+        // Check staleness
         if !sessions.isEmpty, let last = lastUpdate, Date().timeIntervalSince(last) > staleThreshold {
             isStale = true
         } else {
@@ -266,11 +277,6 @@ struct ContentView: View {
         }
         .onDisappear {
             viewModel.stopPolling()
-        }
-        .onChange(of: viewModel.sessions.isEmpty) { _, isEmpty in
-            if isEmpty {
-                NSApp.stop(nil)
-            }
         }
     }
 }
