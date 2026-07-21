@@ -71,7 +71,16 @@ codesign --force --deep -s - "${APP_NAME}"
 
 echo "==> Creating distribution package..."
 mkdir -p "${DIST_DIR}"
-ditto -c -k --keepParent "${APP_NAME}" "${DIST_DIR}/${ZIP_NAME}"
+DIST_NAME="Novascope-v${VERSION}"
+rm -rf "${DIST_DIR}/${DIST_NAME}"
+mkdir -p "${DIST_DIR}/${DIST_NAME}"
+
+# Copy app and install script
+cp -R "${APP_NAME}" "${DIST_DIR}/${DIST_NAME}/"
+cp "scripts/install.sh" "${DIST_DIR}/${DIST_NAME}/"
+
+# Create zip
+(cd "${DIST_DIR}" && ditto -c -k --keepParent "${DIST_NAME}" "${ZIP_NAME}" && rm -rf "${DIST_NAME}")
 
 echo "==> Done: ${DIST_DIR}/${ZIP_NAME}"
 ls -lh "${DIST_DIR}/${ZIP_NAME}"
