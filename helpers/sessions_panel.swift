@@ -83,11 +83,6 @@ final class SessionsViewModel: ObservableObject {
         if isStale { return "Stale (\(sec)s)" }
         return "Updated \(sec)s ago"
     }
-
-    var idealHeight: CGFloat {
-        if sessions.isEmpty { return 180 }
-        return min(70 + CGFloat(sessions.count) * 52, 480)
-    }
 }
 
 // MARK: - Glass background
@@ -254,8 +249,19 @@ struct ContentView: View {
                 // Session list or empty state
                 if viewModel.sessions.isEmpty {
                     EmptyState()
+                        .frame(height: 140)
+                } else if viewModel.sessions.count <= 7 {
+                    // Natural height — no scroll, no wasted space
+                    VStack(spacing: 6) {
+                        ForEach(viewModel.sessions) { session in
+                            SessionCard(session: session)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
                 } else {
-                    ScrollView {
+                    // Many sessions — scroll with thin bar
+                    ScrollView(showsIndicators: true) {
                         LazyVStack(spacing: 6) {
                             ForEach(viewModel.sessions) { session in
                                 SessionCard(session: session)
@@ -264,6 +270,7 @@ struct ContentView: View {
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)
                     }
+                    .frame(maxHeight: 360)
                 }
 
                 Divider()
@@ -275,22 +282,35 @@ struct ContentView: View {
                 )
             }
         }
-        .frame(width: 260, height: viewModel.idealHeight)
-        .animation(.easeOut(duration: 0.2), value: viewModel.idealHeight)
+        .frame(width: 260)
+        .fixedSize(horizontal: true, vertical: viewModel.sessions.count <= 7)
+        .frame(maxHeight: viewModel.sessions.count > 7 ? 480 : nil)
         .onAppear {
             viewModel.startPolling()
         }
         .onDisappear {
             viewModel.stopPolling()
         }
-        .onReceive(viewModel.$sessions) { sessions in
-            guard let window = NSApp.windows.first else { return }
-            let h: CGFloat = sessions.isEmpty ? 180 : min(70 + CGFloat(sessions.count) * 52, 480)
-            var frame = window.frame
-            let dy = frame.height - h
-            frame.origin.y += dy
-            frame.size.height = h
-            window.setFrame(frame, display: true, animate: true)
+        .onReceive(viewModel.$sessions) { _ in
+            // Delay so SwiftUI layout settles before we read the content size
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                guard let window = WindowDelegate.shared.window else { return }
+                guard let hosting = window.contentView as? NSHostingView<AnyView> else {
+                    // Fallback: use contentView bounds
+                    let h = min(max(window.contentView?.bounds.height ?? 180, 180), 480)
+                    var frame = window.frame
+                    frame.origin.y += frame.height - h
+                    frame.size.height = h
+                    window.setFrame(frame, display: true, animate: true)
+                    return
+                }
+                let ideal = hosting.intrinsicContentSize.height
+                let h = min(max(ideal, 180), 480)
+                var frame = window.frame
+                frame.origin.y += frame.height - h
+                frame.size.height = h
+                window.setFrame(frame, display: true, animate: true)
+            }
         }
     }
 }
@@ -340,6 +360,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.contentView = NSHostingView(rootView: contentView)
 
         // Quit when window closes
+        WindowDelegate.shared.window = window
         window.delegate = WindowDelegate.shared
 
         window.makeKeyAndOrderFront(nil)
@@ -351,6 +372,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 final class WindowDelegate: NSObject, NSWindowDelegate {
     static let shared = WindowDelegate()
+    weak var window: NSWindow?
 
     func windowWillClose(_ notification: Notification) {
         NSApp.stop(nil)
