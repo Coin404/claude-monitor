@@ -83,6 +83,11 @@ final class SessionsViewModel: ObservableObject {
         if isStale { return "Stale (\(sec)s)" }
         return "Updated \(sec)s ago"
     }
+
+    var idealHeight: CGFloat {
+        if sessions.isEmpty { return 180 }
+        return min(70 + CGFloat(sessions.count) * 52, 480)
+    }
 }
 
 // MARK: - Glass background
@@ -270,13 +275,22 @@ struct ContentView: View {
                 )
             }
         }
-        .frame(width: 260, height: 480)
-        .fixedSize()
+        .frame(width: 260, height: viewModel.idealHeight)
+        .animation(.easeOut(duration: 0.2), value: viewModel.idealHeight)
         .onAppear {
             viewModel.startPolling()
         }
         .onDisappear {
             viewModel.stopPolling()
+        }
+        .onReceive(viewModel.$sessions) { sessions in
+            guard let window = NSApp.windows.first else { return }
+            let h: CGFloat = sessions.isEmpty ? 180 : min(70 + CGFloat(sessions.count) * 52, 480)
+            var frame = window.frame
+            let dy = frame.height - h
+            frame.origin.y += dy
+            frame.size.height = h
+            window.setFrame(frame, display: true, animate: true)
         }
     }
 }
@@ -304,7 +318,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let contentView = ContentView()
 
         window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 260, height: 480),
+            contentRect: NSRect(x: 0, y: 0, width: 260, height: 180),
             styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered,
             defer: false
