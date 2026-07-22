@@ -40,15 +40,20 @@ git diff --stat HEAD~1
 
 ## Key files to check
 ```
-CLAUDE.md        — dev reference, hook format, state machine
-README.md        — user-facing docs, features, setup
-TODO.md          — task tracking
-main.go          — systray UI, detection loop, menu items
-detector.go      — hook writing, process/proxy detection
-stats.go         — stats tracking, HTML report generation
-stats_window.swift — native stats chart window
-icon.go          — tray icon generation
-activate_darwin.go — native NSRunningApplication activation
+CLAUDE.md                        — dev reference, hook format, state machine
+README.md                        — user-facing docs, features, setup
+main.go                          — systray UI, detection loop, menu items
+internal/detect/hooks.go         — hook writing to settings.json/settings.local.json
+internal/detect/process.go       — Claude process listing, blocked PID detection
+internal/detect/state.go         — per-session state file reading
+internal/detect/terminal.go      — terminal app detection, window activation
+internal/detect/activate_darwin.go — native NSRunningApplication activation (cgo)
+internal/detect/sessions_bridge.go — session data bridge for SwiftUI panel
+internal/core/status.go          — status enum, color constants, display names
+internal/icon/icon.go            — tray icon generation
+internal/stats/tracker.go        — daily status duration tracking, HTML chart
+helpers/stats_window.swift       — native stats chart WKWebView window
+helpers/sessions_panel.swift     — native SwiftUI glass-style sessions panel
 ```
 
 ## Output format

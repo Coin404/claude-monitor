@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run:*)",
+      "Bash(npx tsc:*)"
+    ]
+  },
+  "agents": {
+    "component-builder": {
+      "description": "React 组件生成器 — 精通 Apple Glass Morphism，生成/修改 .tsx + .module.css 成对组件",
+      "tools": "Read, Grep, Glob, Bash, Write, Edit, WebFetch"
+    },
+    "design-reviewer": {
+      "description": "UI 设计一致性审查员 — 审查 React 组件的 Apple Glass 风格一致性、Token 使用、交互完整性",
+      "tools": "Read, Grep, Glob, Bash"
+    },
+    "commit-writer": {
+      "description": "Git 提交信息生成器 — 读取 git diff，按项目规范生成中文 Conventional Commits 并执行提交",
+      "tools": "Bash, Read, Glob, Grep"
+    }
+  },
+  "skills": {
+    "new-component": {
+      "description": "脚手架技能 — /new-component ComponentName 快速生成组件骨架（.tsx + .module.css），遵循 Apple Glass Morphism 规范",
+      "path": ".claude/skills/new-component"
+    }
+  }
+}
