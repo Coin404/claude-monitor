@@ -66,8 +66,10 @@ func GetUsageCached() *UsageSummary {
 const balanceBaselinePath = "/tmp/claude-monitor-balance-baseline.json"
 
 type balanceTracker struct {
-	Date     string  `json:"date"`
-	Baseline float64 `json:"baseline"`
+	Date        string  `json:"date"`
+	Baseline    float64 `json:"baseline"`
+	LastBalance float64 `json:"lastBalance"`
+	TotalTopUps float64 `json:"totalTopUps"`
 }
 
 func fetchDeepSeekBalance() *BalanceInfo {
@@ -116,15 +118,23 @@ func fetchDeepSeekBalance() *BalanceInfo {
 	today := time.Now().Format("2006-01-02")
 
 	if tracker.Date != today {
-		// New day: record baseline
-		tracker = balanceTracker{Date: today, Baseline: current}
+		// New day: reset baseline, forget yesterday's top-ups
+		tracker = balanceTracker{Date: today, Baseline: current, LastBalance: current, TotalTopUps: 0}
 		saveBalanceTracker(tracker)
 	}
 
-	// Spending = baseline - current (0 if topped up)
+	// Detect top-up: balance went up compared to last known balance
+	if current > tracker.LastBalance+0.001 {
+		tracker.TotalTopUps += current - tracker.LastBalance
+	}
+	tracker.LastBalance = current
+	saveBalanceTracker(tracker)
+
+	// Spending = (initial + top-ups) - current, floor at 0
+	totalAvailable := tracker.Baseline + tracker.TotalTopUps
 	spending := 0.0
-	if tracker.Baseline > current {
-		spending = tracker.Baseline - current
+	if totalAvailable > current {
+		spending = totalAvailable - current
 	}
 
 	return &BalanceInfo{
