@@ -23,11 +23,35 @@ type SessionInfo struct {
 	ColorHex    string `json:"colorHex"`
 }
 
+// UsageSummary holds today's API usage data.
+type UsageSummary struct {
+	Balance   *BalanceInfo    `json:"balance,omitempty"`
+	Providers []ProviderUsage `json:"providers,omitempty"`
+	UpdatedAt string          `json:"updatedAt"`
+}
+
+// BalanceInfo holds DeepSeek balance data from official API.
+type BalanceInfo struct {
+	TotalBalance  float64 `json:"totalBalance"`
+	TodaySpending float64 `json:"todaySpending"`
+	Currency      string  `json:"currency"`
+}
+
+// ProviderUsage holds per-provider token/cost stats from CC Switch proxy.
+type ProviderUsage struct {
+	Name         string  `json:"name"`
+	InputTokens  int64   `json:"inputTokens"`
+	OutputTokens int64   `json:"outputTokens"`
+	TotalCost    float64 `json:"totalCost"`
+	RequestCount int64   `json:"requestCount"`
+}
+
 // SessionsSnapshot is the JSON payload written to /tmp/claude-monitor-sessions.json.
 type SessionsSnapshot struct {
 	Sessions  []SessionInfo `json:"sessions"`
 	Timestamp string        `json:"timestamp"`
 	Count     int           `json:"count"`
+	Usage     *UsageSummary `json:"usage,omitempty"`
 }
 
 // WriteSessionsSnapshot collects session data from all running Claude
@@ -61,6 +85,7 @@ func WriteSessionsSnapshot() {
 		Sessions:  infos,
 		Timestamp: time.Now().Format(time.RFC3339),
 		Count:     len(infos),
+		Usage:     GetUsageCached(),
 	}
 
 	var buf bytes.Buffer

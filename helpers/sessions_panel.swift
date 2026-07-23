@@ -23,12 +23,37 @@ struct SessionsSnapshot: Codable {
     let sessions: [SessionInfo]
     let timestamp: String
     let count: Int
+    let usage: UsageSummary?
+}
+
+// MARK: - Usage data model
+
+struct UsageSummary: Codable, Equatable {
+    let updatedAt: String
+    let balance: BalanceInfo?
+    let providers: [ProviderUsage]?
+}
+
+struct BalanceInfo: Codable, Equatable {
+    let totalBalance: Double
+    let todaySpending: Double
+    let currency: String
+}
+
+struct ProviderUsage: Codable, Equatable, Identifiable {
+    var id: String { name }
+    let name: String
+    let inputTokens: Int64
+    let outputTokens: Int64
+    let totalCost: Double
+    let requestCount: Int64
 }
 
 // MARK: - ViewModel
 
 final class SessionsViewModel: ObservableObject {
     @Published var sessions: [SessionInfo] = []
+    @Published var usage: UsageSummary?
     @Published var lastUpdate: Date?
     @Published var isStale = false
     private var hasEverHadSessions = false
@@ -53,8 +78,12 @@ final class SessionsViewModel: ObservableObject {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: jsonPath)) else { return }
         guard let snap = try? JSONDecoder().decode(SessionsSnapshot.self, from: data) else { return }
         let newSessions = snap.sessions
+        let newUsage = snap.usage
         if newSessions != sessions {
             sessions = newSessions
+        }
+        if newUsage != usage {
+            usage = newUsage
         }
         if !newSessions.isEmpty {
             hasEverHadSessions = true
@@ -197,6 +226,115 @@ struct EmptyState: View {
     }
 }
 
+// MARK: - Usage card
+
+struct UsageCard: View {
+    let usage: UsageSummary
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Divider()
+                .opacity(0.3)
+
+            VStack(spacing: 8) {
+                HStack {
+                    Text("Today's Usage")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+
+                // Balance from DeepSeek official API
+                if let balance = usage.balance {
+                    HStack(spacing: 8) {
+                        Text("DeepSeek")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.primary)
+                        Spacer()
+                        Text("余额 ¥\(String(format: "%.2f", balance.totalBalance))")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                // Spending + tokens on one row
+                if let balance = usage.balance {
+                    HStack(spacing: 8) {
+                        Spacer()
+                        Text("¥\(String(format: "%.2f", balance.todaySpending))")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.primary)
+                            .monospacedDigit()
+                        if let providers = usage.providers, let first = providers.first {
+                            HStack(spacing: 4) {
+                                TokenLabel(icon: "arrow.down", value: formatTokens(first.inputTokens))
+                                TokenLabel(icon: "arrow.up", value: formatTokens(first.outputTokens))
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+        }
+    }
+}
+
+struct ProviderRow: View {
+    let provider: ProviderUsage
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(provider.name)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.primary)
+                .lineLimit(1)
+
+            Spacer()
+
+            HStack(spacing: 4) {
+                TokenLabel(icon: "arrow.down", value: formatTokens(provider.inputTokens))
+                TokenLabel(icon: "arrow.up", value: formatTokens(provider.outputTokens))
+            }
+        }
+    }
+}
+
+struct TokenLabel: View {
+    let icon: String
+    let value: String
+
+    var body: some View {
+        HStack(spacing: 1) {
+            Image(systemName: icon)
+                .font(.system(size: 8, weight: .medium))
+                .foregroundColor(.secondary.opacity(0.6))
+            Text(value)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(.secondary)
+                .monospacedDigit()
+        }
+    }
+}
+
+private let usdToCnyRate: Double = {
+    if let s = ProcessInfo.processInfo.environment["CC_SWITCH_USD_CNY_RATE"],
+       let r = Double(s), r > 0 {
+        return r
+    }
+    return 7.25
+}()
+
+private func formatTokens(_ tokens: Int64) -> String {
+    if tokens >= 1_000_000 {
+        return String(format: "%.1fM", Double(tokens) / 1_000_000.0)
+    } else if tokens >= 1_000 {
+        return String(format: "%.1fK", Double(tokens) / 1_000.0)
+    } else {
+        return "\(tokens)"
+    }
+}
+
 // MARK: - Footer
 
 struct FooterView: View {
@@ -273,6 +411,11 @@ struct ContentView: View {
                     .frame(maxHeight: 360)
                 }
 
+                // Usage card (only when balance data is available)
+                if let usage = viewModel.usage, (usage.balance != nil || usage.providers != nil) {
+                    UsageCard(usage: usage)
+                }
+
                 Divider()
                     .opacity(0.3)
 
@@ -282,7 +425,7 @@ struct ContentView: View {
                 )
             }
         }
-        .frame(width: 260)
+        .frame(width: 340)
         .fixedSize(horizontal: true, vertical: viewModel.sessions.count <= 7)
         .frame(maxHeight: viewModel.sessions.count > 7 ? 480 : nil)
         .onAppear {
@@ -292,7 +435,14 @@ struct ContentView: View {
             viewModel.stopPolling()
         }
         .onReceive(viewModel.$sessions) { _ in
-            // Delay so SwiftUI layout settles before we read the content size
+            resizeWindow()
+        }
+        .onReceive(viewModel.$usage) { _ in
+            resizeWindow()
+        }
+    }
+
+    private func resizeWindow() {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                 guard let window = WindowDelegate.shared.window else { return }
                 guard let hosting = window.contentView as? NSHostingView<AnyView> else {
@@ -313,7 +463,6 @@ struct ContentView: View {
             }
         }
     }
-}
 
 // MARK: - Color hex helper
 
@@ -338,7 +487,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let contentView = ContentView()
 
         window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 260, height: 180),
+            contentRect: NSRect(x: 0, y: 0, width: 340, height: 180),
             styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered,
             defer: false

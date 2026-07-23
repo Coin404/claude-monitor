@@ -60,6 +60,13 @@ func main() {
 func onReady() {
 	startupTime = time.Now()
 
+	// Auto-detect DeepSeek API key from CC Switch if not already set
+	if os.Getenv("DEEPSEEK_API_KEY") == "" {
+		if key := detect.ExtractDeepSeekAPIKey(); key != "" {
+			os.Setenv("DEEPSEEK_API_KEY", key)
+		}
+	}
+
 	rewriteItem := systray.AddMenuItem("Re-write Hooks", "Re-write Claude Code hook configuration")
 	systray.AddSeparator()
 
