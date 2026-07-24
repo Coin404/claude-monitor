@@ -56,6 +56,7 @@ final class SessionsViewModel: ObservableObject {
     @Published var usage: UsageSummary?
     @Published var lastUpdate: Date?
     @Published var isStale = false
+    @Published var skinMode: String = loadSkinMode()
     private var hasEverHadSessions = false
 
     private var timer: Timer?
@@ -75,10 +76,16 @@ final class SessionsViewModel: ObservableObject {
     }
 
     private func refresh() {
+        // Check shared skin mode (must happen regardless of session data)
+        if let newSkin = readSkinMode(), newSkin != skinMode {
+            skinMode = newSkin
+        }
+
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: jsonPath)) else { return }
         guard let snap = try? JSONDecoder().decode(SessionsSnapshot.self, from: data) else { return }
         let newSessions = snap.sessions
         let newUsage = snap.usage
+
         if newSessions != sessions {
             sessions = newSessions
         }
@@ -357,8 +364,13 @@ struct ContentView: View {
 
     var body: some View {
         ZStack {
-            VisualEffectView()
-                .ignoresSafeArea()
+            if viewModel.skinMode == "white" {
+                Color(NSColor.windowBackgroundColor)
+                    .ignoresSafeArea()
+            } else {
+                VisualEffectView()
+                    .ignoresSafeArea()
+            }
 
             VStack(spacing: 0) {
                 // Header
@@ -526,6 +538,24 @@ final class WindowDelegate: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         NSApp.stop(nil)
     }
+}
+
+// MARK: - Skin persistence (shared via /tmp with settings helper)
+
+private let skinPath = "/tmp/claude-monitor-skin.json"
+
+private func loadSkinMode() -> String {
+    guard let data = try? Data(contentsOf: URL(fileURLWithPath: skinPath)),
+          let obj = try? JSONDecoder().decode([String: String].self, from: data),
+          let mode = obj["skinMode"] else { return "glass" }
+    return mode
+}
+
+private func readSkinMode() -> String? {
+    guard let data = try? Data(contentsOf: URL(fileURLWithPath: skinPath)),
+          let obj = try? JSONDecoder().decode([String: String].self, from: data),
+          let mode = obj["skinMode"] else { return nil }
+    return mode
 }
 
 // MARK: - App entry

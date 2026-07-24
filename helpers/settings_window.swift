@@ -469,11 +469,17 @@ struct ContentView: View {
     @State private var showAddSheet = false
     @State private var newLabel = ""
     @State private var newKey = ""
+    @State private var skinMode: String = loadSkinMode()
 
     var body: some View {
         ZStack {
-            VisualEffectView()
-                .ignoresSafeArea()
+            if skinMode == "white" {
+                Color(NSColor.windowBackgroundColor)
+                    .ignoresSafeArea()
+            } else {
+                VisualEffectView()
+                    .ignoresSafeArea()
+            }
 
             HStack(spacing: 0) {
                 // MARK: Left tab column
@@ -676,6 +682,26 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
+                // Skin picker
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Appearance")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.secondary)
+                    Picker("", selection: Binding<String>(
+                        get: { skinMode },
+                        set: {
+                            skinMode = $0
+                            saveSkinMode($0)
+                        }
+                    )) {
+                        Text("Glass").tag("glass")
+                        Text("White").tag("white")
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(maxWidth: 200, alignment: .leading)
+                }
+
                 Spacer()
             }
             .padding(.horizontal, 16)
@@ -783,6 +809,23 @@ final class WindowDelegate: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         NSApp.stop(nil)
     }
+}
+
+// MARK: - Skin persistence (shared via /tmp with sessions panel)
+
+private let skinPath = "/tmp/claude-monitor-skin.json"
+
+private func loadSkinMode() -> String {
+    guard let data = try? Data(contentsOf: URL(fileURLWithPath: skinPath)),
+          let obj = try? JSONDecoder().decode([String: String].self, from: data),
+          let mode = obj["skinMode"] else { return "glass" }
+    return mode
+}
+
+private func saveSkinMode(_ mode: String) {
+    let obj = ["skinMode": mode]
+    guard let data = try? JSONEncoder().encode(obj) else { return }
+    try? data.write(to: URL(fileURLWithPath: skinPath), options: .atomic)
 }
 
 // MARK: - App entry

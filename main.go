@@ -426,12 +426,23 @@ func detectStatus() (core.Status, string) {
 // panelHelperName is the compiled Swift helper binary for the sessions panel.
 const panelHelperName = "novascope-panel-helper"
 
+// appBundleMacOSDir returns the path to Novascope.app/Contents/MacOS/.
+func appBundleMacOSDir() (string, error) {
+	root := core.FindProjectRoot()
+	if root == "/tmp" {
+		return "", fmt.Errorf("cannot find project root")
+	}
+	dir := filepath.Join(root, "Novascope.app", "Contents", "MacOS")
+	return dir, nil
+}
+
 // ensurePanelHelper compiles the SwiftUI sessions panel helper if needed.
 func ensurePanelHelper() (string, error) {
-	dest := filepath.Join(core.ExecutableDir(), panelHelperName)
-	if dest == "" || dest == "/tmp/"+panelHelperName {
-		return "", fmt.Errorf("cannot determine executable directory")
+	binDir, err := appBundleMacOSDir()
+	if err != nil {
+		return "", err
 	}
+	dest := filepath.Join(binDir, panelHelperName)
 	if _, err := os.Stat(dest); err == nil {
 		return dest, nil
 	}
@@ -492,10 +503,11 @@ const settingsHelperName = "novascope-settings-helper"
 
 // ensureSettingsHelper compiles the SwiftUI settings window helper if needed.
 func ensureSettingsHelper() (string, error) {
-	dest := filepath.Join(core.ExecutableDir(), settingsHelperName)
-	if dest == "" || dest == "/tmp/"+settingsHelperName {
-		return "", fmt.Errorf("cannot determine executable directory")
+	binDir, err := appBundleMacOSDir()
+	if err != nil {
+		return "", err
 	}
+	dest := filepath.Join(binDir, settingsHelperName)
 	if _, err := os.Stat(dest); err == nil {
 		return dest, nil
 	}

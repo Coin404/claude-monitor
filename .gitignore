@@ -1,9 +1,9 @@
 # Built binary
 claude-monitor
-novascope-panel-helper
 Novascope.app/Contents/MacOS/claude-monitor
 Novascope.app/Contents/MacOS/novascope-stats-helper
 Novascope.app/Contents/MacOS/novascope-panel-helper
+Novascope.app/Contents/MacOS/novascope-settings-helper
 
 # Code signature
 Novascope.app/Contents/_CodeSignature/

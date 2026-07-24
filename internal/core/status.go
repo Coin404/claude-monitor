@@ -122,15 +122,6 @@ func FindProjectRoot() string {
 	return "/tmp"
 }
 
-// ExecutableDir returns the directory containing the running executable.
-func ExecutableDir() string {
-	exe, err := os.Executable()
-	if err != nil {
-		return "/tmp"
-	}
-	return filepath.Dir(exe)
-}
-
 // AppSupportDir returns the Novascope app support directory
 // (~/Library/Application Support/Novascope), creating it if needed.
 func AppSupportDir() string {
