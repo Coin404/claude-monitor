@@ -2,7 +2,6 @@ package settings
 
 import (
 	"crypto/rand"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,8 +12,6 @@ import (
 	"time"
 
 	"claude-monitor/internal/core"
-
-	_ "github.com/mattn/go-sqlite3"
 )
 
 // === Data model ===
@@ -241,7 +238,6 @@ func ToggleKey(id string) (KeyEntry, error) {
 	if err := SaveKeys(store); err != nil {
 		return KeyEntry{}, err
 	}
-	// Return the updated entry
 	for _, k := range store.Keys {
 		if k.ID == id {
 			return k, nil
@@ -256,109 +252,6 @@ func MaskKey(key string) string {
 		return strings.Repeat("*", len(key))
 	}
 	return key[:3] + "..." + key[len(key)-4:]
-}
-
-// === CC Switch import ===
-
-// ImportFromCCSwitch reads all DeepSeek providers from the CC Switch SQLite DB
-// and imports any keys not already present in the store. Returns the count of
-// newly imported keys.
-func ImportFromCCSwitch() (int, error) {
-	dbPath := ccSwitchDBPath()
-	if dbPath == "" {
-		return 0, fmt.Errorf("cannot determine CC Switch DB path")
-	}
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return 0, nil // No DB, not an error
-	}
-
-	db, err := sql.Open("sqlite3", dbPath+"?mode=ro")
-	if err != nil {
-		return 0, err
-	}
-	defer db.Close()
-
-	rows, err := db.Query("SELECT id, name, settings_config FROM providers WHERE name LIKE '%DeepSeek%'")
-	if err != nil {
-		return 0, err
-	}
-	defer rows.Close()
-
-	type rawProvider struct {
-		ID      string
-		Name    string
-		Config  string
-	}
-
-	var providers []rawProvider
-	for rows.Next() {
-		var r rawProvider
-		if err := rows.Scan(&r.ID, &r.Name, &r.Config); err != nil {
-			continue
-		}
-		providers = append(providers, r)
-	}
-
-	store := LoadKeys()
-	imported := 0
-
-	for _, p := range providers {
-		var settings struct {
-			Env map[string]string `json:"env"`
-		}
-		if err := json.Unmarshal([]byte(p.Config), &settings); err != nil {
-			continue
-		}
-		key := settings.Env["ANTHROPIC_AUTH_TOKEN"]
-		if key == "" {
-			continue
-		}
-
-		model := settings.Env["ANTHROPIC_MODEL"]
-
-		// Dedup check
-		dup := false
-		for _, e := range store.Keys {
-			if e.Key == key {
-				dup = true
-				break
-			}
-		}
-		if dup {
-			continue
-		}
-
-		label := fmt.Sprintf("CC Switch - %s", p.Name)
-		entry := KeyEntry{
-			ID:                 generateID(),
-			Label:              label,
-			Key:                key,
-			Active:             true,
-			CreatedAt:          time.Now().Format(time.RFC3339),
-			Model:              model,
-			CCSwitchProviderID: p.ID,
-		}
-		store.Keys = append(store.Keys, entry)
-		imported++
-	}
-
-	if imported > 0 {
-		if err := SaveKeys(store); err != nil {
-			return imported, err
-		}
-	}
-	return imported, nil
-}
-
-func ccSwitchDBPath() string {
-	if p := os.Getenv("CC_SWITCH_DB_PATH"); p != "" {
-		return p
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".cc-switch", "cc-switch.db")
 }
 
 // === Balance API ===

@@ -469,7 +469,6 @@ struct ContentView: View {
     @State private var showAddSheet = false
     @State private var newLabel = ""
     @State private var newKey = ""
-    @State private var hoveredRefresh = false
 
     var body: some View {
         ZStack {
@@ -665,6 +664,7 @@ struct ContentView: View {
                         get: { viewModel.refreshIntervalSec },
                         set: { viewModel.setInterval(seconds: $0) }
                     )) {
+                        Text("1s").tag(1)
                         Text("10s").tag(10)
                         Text("30s").tag(30)
                         Text("60s").tag(60)
@@ -675,34 +675,6 @@ struct ContentView: View {
                     .labelsHidden()
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-
-                // Refresh button
-                Button(action: { viewModel.refreshBalances() }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 10, weight: .medium))
-                        Text("Refresh Balances")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundColor(hoveredRefresh ? .blue : .secondary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .frame(maxWidth: .infinity)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(hoveredRefresh
-                                ? Color.blue.opacity(0.1)
-                                : Color.primary.opacity(0.06))
-                    )
-                }
-                .buttonStyle(.plain)
-                .onHover { h in hoveredRefresh = h }
-
-                Divider()
-                    .opacity(0.3)
-
-                // Active key overview card
-                ActiveKeyCard(key: viewModel.activeKey)
 
                 Spacer()
             }

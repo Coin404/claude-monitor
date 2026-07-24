@@ -61,13 +61,6 @@ func main() {
 func onReady() {
 	startupTime = time.Now()
 
-	// Auto-detect DeepSeek API key from CC Switch if not already set
-	if os.Getenv("DEEPSEEK_API_KEY") == "" {
-		if key := detect.ExtractDeepSeekAPIKey(); key != "" {
-			os.Setenv("DEEPSEEK_API_KEY", key)
-		}
-	}
-
 	rewriteItem := systray.AddMenuItem("Re-write Hooks", "Re-write Claude Code hook configuration")
 	systray.AddSeparator()
 
@@ -172,17 +165,8 @@ func onReady() {
 
 	// === Settings / DeepSeek Key Management ===
 
-	// 1. Startup: auto-import keys from CC Switch + DEEPSEEK_API_KEY env migration
+	// 1. Startup: migrate DEEPSEEK_API_KEY env var into key store if not already present
 	go func() {
-		imported, err := settings.ImportFromCCSwitch()
-		if err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "claude-monitor: CC Switch import: %v\n", err)
-		}
-		if imported > 0 {
-			_, _ = fmt.Fprintf(os.Stderr, "claude-monitor: imported %d DeepSeek key(s) from CC Switch\n", imported)
-		}
-
-		// Migrate DEEPSEEK_API_KEY env var into key store if not already present
 		if envKey := os.Getenv("DEEPSEEK_API_KEY"); envKey != "" {
 			store := settings.LoadKeys()
 			found := false
@@ -255,8 +239,6 @@ func onReady() {
 					if _, err := settings.ToggleKey(action.ID); err != nil {
 						_, _ = fmt.Fprintf(os.Stderr, "claude-monitor: toggle key: %v\n", err)
 					} else {
-						// Immediately refresh balances so the sessions panel
-						// shows the newly activated key's balance
 						go settings.RefreshAllBalances()
 					}
 				}
@@ -282,29 +264,6 @@ func onReady() {
 					s.PollIntervalMs = ms
 					_ = settings.SaveAppSettings(s)
 				}
-			}
-		}
-	}()
-
-	// 5. Watch CC Switch settings.json for provider changes, match by CCSwitchProviderID
-	go func() {
-		ch := make(chan detect.CCSwitchChange, 8)
-		go detect.WatchCCSwitchSettings(ch)
-		for change := range ch {
-			if change.CurrentProviderID == "" {
-				continue
-			}
-			store := settings.LoadKeys()
-			changed := false
-			for i := range store.Keys {
-				shouldBeActive := store.Keys[i].CCSwitchProviderID == change.CurrentProviderID
-				if store.Keys[i].Active != shouldBeActive {
-					store.Keys[i].Active = shouldBeActive
-					changed = true
-				}
-			}
-			if changed {
-				_ = settings.SaveKeys(store)
 			}
 		}
 	}()
