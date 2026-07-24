@@ -18,10 +18,11 @@ import (
 	"claude-monitor/internal/core"
 	"claude-monitor/internal/detect"
 	"claude-monitor/internal/icon"
-	"claude-monitor/internal/stats"
+	"claude-monitor/internal/settings"
 )
 
-var pollIntervalMs int32 = 10 // default 10ms, updated atomically
+var pollIntervalMs int32 = 10          // default 10ms, updated atomically
+var refreshIntervalSec int32 = 30      // default 30s, updated atomically
 
 var statusIcons map[core.Status][]byte
 
@@ -36,8 +37,8 @@ var (
 	allSessionsItem *systray.MenuItem
 	lastNotifyTime  time.Time // debounce notifications
 	startupTime     time.Time // suppresses notification during startup grace period
-	tracker         *stats.Tracker
 	panelHelperPID  int // PID of sessions panel helper (0 = not running)
+	settingsHelperPID int // PID of settings window helper (0 = not running)
 )
 
 func main() {
@@ -79,23 +80,11 @@ func onReady() {
 	}
 
 	systray.AddSeparator()
-	tracker = stats.NewTracker()
-	stats.CleanupOldStats(1)
-	statsChartItem := systray.AddMenuItem("View Stats Chart", "Open statistics chart in a native window")
 	sessionsPanelItem := systray.AddMenuItem("Show Sessions Panel", "Open sessions overview in a native window")
+	settingsWindowItem := systray.AddMenuItem("Settings...", "Manage DeepSeek API keys and settings")
 	systray.AddSeparator()
 
 	quitItem := systray.AddMenuItem("Quit", "Quit Novascope")
-
-	// Poll interval submenu
-	systray.AddSeparator()
-	item5ms := systray.AddMenuItem("Poll: 5ms", "Poll interval 5ms")
-	item10ms := systray.AddMenuItem("Poll: 10ms", "Poll interval 10ms")
-	item30ms := systray.AddMenuItem("Poll: 30ms", "Poll interval 30ms")
-	item50ms := systray.AddMenuItem("Poll: 50ms", "Poll interval 50ms")
-	item10ms.Check() // default
-
-	intervalItems := map[int32]*systray.MenuItem{5: item5ms, 10: item10ms, 30: item30ms, 50: item50ms}
 
 	currentStatus := core.StatusStopped
 	systray.SetIcon(statusIcons[currentStatus])
@@ -144,14 +133,6 @@ func onReady() {
 		}()
 	}
 
-	// Handle stats chart click
-	go func() {
-		for range statsChartItem.ClickedCh {
-			ds := tracker.Snapshot()
-			_ = stats.OpenStatsInBrowser(ds)
-		}
-	}()
-
 	// Handle sessions panel click
 	go func() {
 		for range sessionsPanelItem.ClickedCh {
@@ -159,20 +140,12 @@ func onReady() {
 		}
 	}()
 
-	// Handle poll interval changes
-	for ms, item := range intervalItems {
-		ms := ms
-		it := item
-		go func() {
-			for range it.ClickedCh {
-				atomic.StoreInt32(&pollIntervalMs, ms)
-				for _, mi := range intervalItems {
-					mi.Uncheck()
-				}
-				it.Check()
-			}
-		}()
-	}
+	// Handle settings window click
+	go func() {
+		for range settingsWindowItem.ClickedCh {
+			launchSettingsWindow()
+		}
+	}()
 
 	// Refresh session menu on tray open or every 500ms
 	go func() {
@@ -194,6 +167,145 @@ func onReady() {
 		defer ticker.Stop()
 		for range ticker.C {
 			detect.WriteSessionsSnapshot()
+		}
+	}()
+
+	// === Settings / DeepSeek Key Management ===
+
+	// 1. Startup: auto-import keys from CC Switch + DEEPSEEK_API_KEY env migration
+	go func() {
+		imported, err := settings.ImportFromCCSwitch()
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "claude-monitor: CC Switch import: %v\n", err)
+		}
+		if imported > 0 {
+			_, _ = fmt.Fprintf(os.Stderr, "claude-monitor: imported %d DeepSeek key(s) from CC Switch\n", imported)
+		}
+
+		// Migrate DEEPSEEK_API_KEY env var into key store if not already present
+		if envKey := os.Getenv("DEEPSEEK_API_KEY"); envKey != "" {
+			store := settings.LoadKeys()
+			found := false
+			for _, e := range store.Keys {
+				if e.Key == envKey {
+					found = true
+					break
+				}
+			}
+			if !found {
+				if _, err := settings.AddKey("DEEPSEEK_API_KEY", envKey, "", ""); err == nil {
+					_, _ = fmt.Fprintf(os.Stderr, "claude-monitor: migrated DEEPSEEK_API_KEY env var to key store\n")
+				}
+			}
+		}
+	}()
+
+	// 2. Load app settings and set initial intervals
+	go func() {
+		appSettings := settings.LoadAppSettings()
+		atomic.StoreInt32(&refreshIntervalSec, int32(appSettings.RefreshIntervalSec))
+		atomic.StoreInt32(&pollIntervalMs, int32(appSettings.PollIntervalMs))
+	}()
+
+	// 3. Refresh all active key balances on a dynamic interval
+	go func() {
+		// Initial refresh after a short delay to let import and settings load finish
+		time.Sleep(2 * time.Second)
+		settings.RefreshAllBalances()
+
+		for {
+			time.Sleep(time.Duration(atomic.LoadInt32(&refreshIntervalSec)) * time.Second)
+			settings.RefreshAllBalances()
+		}
+	}()
+
+	// 4. Write keys snapshot JSON every 200ms for the SwiftUI settings window
+	go func() {
+		ticker := time.NewTicker(200 * time.Millisecond)
+		defer ticker.Stop()
+		for range ticker.C {
+			settings.WriteKeysSnapshot(atomic.LoadInt32(&refreshIntervalSec), atomic.LoadInt32(&pollIntervalMs))
+		}
+	}()
+
+	// 4. Watch for key actions from the SwiftUI settings window
+	go func() {
+		ch := make(chan settings.KeyAction, 8)
+		go settings.WatchKeyActions(ch)
+		for action := range ch {
+			switch action.Action {
+			case "add":
+				if action.Key != "" {
+					label := action.Label
+					if label == "" {
+						label = "New Key"
+					}
+					if _, err := settings.AddKey(label, action.Key, "", ""); err != nil {
+						_, _ = fmt.Fprintf(os.Stderr, "claude-monitor: add key: %v\n", err)
+					}
+				}
+			case "delete":
+				if action.ID != "" {
+					if err := settings.DeleteKey(action.ID); err != nil {
+						_, _ = fmt.Fprintf(os.Stderr, "claude-monitor: delete key: %v\n", err)
+					}
+				}
+			case "toggle":
+				if action.ID != "" {
+					if _, err := settings.ToggleKey(action.ID); err != nil {
+						_, _ = fmt.Fprintf(os.Stderr, "claude-monitor: toggle key: %v\n", err)
+					} else {
+						// Immediately refresh balances so the sessions panel
+						// shows the newly activated key's balance
+						go settings.RefreshAllBalances()
+					}
+				}
+			case "edit":
+				if action.ID != "" && action.Label != "" {
+					if err := settings.UpdateKeyLabel(action.ID, action.Label); err != nil {
+						_, _ = fmt.Fprintf(os.Stderr, "claude-monitor: edit key: %v\n", err)
+					}
+				}
+			case "refresh":
+				settings.RefreshAllBalances()
+			case "setInterval":
+				if sec, err := strconv.Atoi(action.Key); err == nil && sec > 0 {
+					atomic.StoreInt32(&refreshIntervalSec, int32(sec))
+					s := settings.LoadAppSettings()
+					s.RefreshIntervalSec = sec
+					_ = settings.SaveAppSettings(s)
+				}
+			case "setPollInterval":
+				if ms, err := strconv.Atoi(action.Key); err == nil && ms > 0 {
+					atomic.StoreInt32(&pollIntervalMs, int32(ms))
+					s := settings.LoadAppSettings()
+					s.PollIntervalMs = ms
+					_ = settings.SaveAppSettings(s)
+				}
+			}
+		}
+	}()
+
+	// 5. Watch CC Switch settings.json for provider changes, match by CCSwitchProviderID
+	go func() {
+		ch := make(chan detect.CCSwitchChange, 8)
+		go detect.WatchCCSwitchSettings(ch)
+		for change := range ch {
+			if change.CurrentProviderID == "" {
+				continue
+			}
+			store := settings.LoadKeys()
+			changed := false
+			for i := range store.Keys {
+				shouldBeActive := store.Keys[i].CCSwitchProviderID == change.CurrentProviderID
+				if store.Keys[i].Active != shouldBeActive {
+					store.Keys[i].Active = shouldBeActive
+					changed = true
+				}
+			}
+			if changed {
+				_ = settings.SaveKeys(store)
+			}
 		}
 	}()
 
@@ -238,7 +350,6 @@ func onReady() {
 					}
 					sendNotification("Novascope", project+" needs your attention")
 				}
-				tracker.RecordStatusChange(detected)
 				currentStatus = detected
 				systray.SetIcon(statusIcons[currentStatus])
 			}
@@ -247,13 +358,19 @@ func onReady() {
 }
 
 func onExit() {
-	tracker.FlushCurrentSession()
 	// Kill the sessions panel helper if it's running
 	if panelHelperPID != 0 {
 		if p, err := os.FindProcess(panelHelperPID); err == nil {
 			_ = p.Kill()
 		}
 		panelHelperPID = 0
+	}
+	// Kill the settings window helper if it's running
+	if settingsHelperPID != 0 {
+		if p, err := os.FindProcess(settingsHelperPID); err == nil {
+			_ = p.Kill()
+		}
+		settingsHelperPID = 0
 	}
 }
 
@@ -407,5 +524,67 @@ func launchSessionsPanel() {
 	go func() {
 		_ = cmd.Wait()
 		panelHelperPID = 0
+	}()
+}
+
+// === Settings window helper ===
+
+const settingsHelperName = "novascope-settings-helper"
+
+// ensureSettingsHelper compiles the SwiftUI settings window helper if needed.
+func ensureSettingsHelper() (string, error) {
+	dest := filepath.Join(core.ExecutableDir(), settingsHelperName)
+	if dest == "" || dest == "/tmp/"+settingsHelperName {
+		return "", fmt.Errorf("cannot determine executable directory")
+	}
+	if _, err := os.Stat(dest); err == nil {
+		return dest, nil
+	}
+	root := core.FindProjectRoot()
+	if root == "/tmp" {
+		return "", fmt.Errorf("cannot find source: project root not found (pre-compiled binary not available)")
+	}
+	src := filepath.Join(root, "helpers", "settings_window.swift")
+	if _, err := os.Stat(src); os.IsNotExist(err) {
+		return "", fmt.Errorf("settings_window.swift not found at %s", src)
+	}
+	cmd := exec.Command("swiftc", "-o", dest, src)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("swiftc: %w\n%s", err, string(output))
+	}
+	return dest, nil
+}
+
+// launchSettingsWindow starts or activates the settings window.
+func launchSettingsWindow() {
+	// Check if existing helper is still alive
+	if settingsHelperPID != 0 {
+		process, err := os.FindProcess(settingsHelperPID)
+		if err == nil {
+			err = process.Signal(syscall.Signal(0))
+		}
+		if err == nil {
+			// Process exists — kill and restart to bring window to front
+			_ = process.Kill()
+		}
+		settingsHelperPID = 0
+	}
+
+	helper, err := ensureSettingsHelper()
+	if err != nil {
+		return
+	}
+	cmd := exec.Command(helper)
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if err := cmd.Start(); err != nil {
+		return
+	}
+	settingsHelperPID = cmd.Process.Pid
+	// Don't Wait() — let the helper run independently
+	go func() {
+		_ = cmd.Wait()
+		settingsHelperPID = 0
 	}()
 }

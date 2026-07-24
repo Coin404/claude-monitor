@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"claude-monitor/internal/core"
+	"claude-monitor/internal/settings"
 )
 
 const sessionsSnapshotPath = "/tmp/claude-monitor-sessions.json"
@@ -81,11 +82,21 @@ func WriteSessionsSnapshot() {
 		return infos[i].PID < infos[j].PID
 	})
 
+	// Aggregate balance from active keys in the settings store
+	usage := GetUsageCached()
+	if kb := aggregateKeyBalance(); kb != nil {
+		if usage == nil {
+			usage = &UsageSummary{}
+		}
+		usage.Balance = kb
+		usage.UpdatedAt = time.Now().Format(time.RFC3339)
+	}
+
 	snap := SessionsSnapshot{
 		Sessions:  infos,
 		Timestamp: time.Now().Format(time.RFC3339),
 		Count:     len(infos),
-		Usage:     GetUsageCached(),
+		Usage:     usage,
 	}
 
 	var buf bytes.Buffer
@@ -103,5 +114,37 @@ func WriteSessionsSnapshot() {
 	if err := os.Rename(tmpPath, sessionsSnapshotPath); err != nil {
 		_ = os.Remove(tmpPath)
 		return
+	}
+}
+
+// aggregateKeyBalance sums up balance and spending across all active keys
+// from the settings key store.
+func aggregateKeyBalance() *BalanceInfo {
+	store := settings.LoadKeys()
+	var totalBalance, totalSpending float64
+	var currency string
+	hasData := false
+
+	for _, k := range store.Keys {
+		if !k.Active {
+			continue
+		}
+		if k.Error != "" || k.Balance <= 0 {
+			continue
+		}
+		totalBalance += k.Balance
+		totalSpending += k.TodaySpending
+		currency = k.Currency
+		hasData = true
+	}
+
+	if !hasData {
+		return nil
+	}
+
+	return &BalanceInfo{
+		TotalBalance:  totalBalance,
+		TodaySpending: totalSpending,
+		Currency:      currency,
 	}
 }

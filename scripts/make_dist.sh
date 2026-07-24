@@ -21,13 +21,6 @@ lipo -create /tmp/claude-monitor-arm64 /tmp/claude-monitor-amd64 -output "${APP_
 rm /tmp/claude-monitor-arm64 /tmp/claude-monitor-amd64
 echo "==> Go binary OK"
 
-echo "==> Building stats helper (universal)..."
-swiftc -target arm64-apple-macos11.0 -o /tmp/stats-arm64 "helpers/stats_window.swift"
-swiftc -target x86_64-apple-macos11.0 -o /tmp/stats-amd64 "helpers/stats_window.swift"
-lipo -create /tmp/stats-arm64 /tmp/stats-amd64 -output "${APP_NAME}/Contents/MacOS/novascope-stats-helper"
-rm /tmp/stats-arm64 /tmp/stats-amd64
-echo "==> Stats helper OK"
-
 echo "==> Building sessions panel helper (universal)..."
 swiftc -target arm64-apple-macos11.0 -o /tmp/panel-arm64 "helpers/sessions_panel.swift"
 swiftc -target x86_64-apple-macos11.0 -o /tmp/panel-amd64 "helpers/sessions_panel.swift"

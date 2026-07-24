@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"claude-monitor/internal/core"
+
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -63,7 +65,11 @@ func GetUsageCached() *UsageSummary {
 
 // === DeepSeek balance API ===
 
-const balanceBaselinePath = "/tmp/claude-monitor-balance-baseline.json"
+const balanceBaselineFile = "claude-monitor-balance-baseline.json"
+
+func balanceBaselinePath() string {
+	return filepath.Join(core.AppSupportDir(), balanceBaselineFile)
+}
 
 type balanceTracker struct {
 	Date        string  `json:"date"`
@@ -145,8 +151,19 @@ func fetchDeepSeekBalance() *BalanceInfo {
 }
 
 func loadBalanceTracker() balanceTracker {
-	data, err := os.ReadFile(balanceBaselinePath)
+	const legacyPath = "/tmp/claude-monitor-balance-baseline.json"
+
+	data, err := os.ReadFile(balanceBaselinePath())
 	if err != nil {
+		// Migrate from legacy /tmp location (which gets wiped on reboot)
+		if legacyData, legacyErr := os.ReadFile(legacyPath); legacyErr == nil {
+			var t balanceTracker
+			if json.Unmarshal(legacyData, &t) == nil {
+				saveBalanceTracker(t)
+				_ = os.Remove(legacyPath)
+				return t
+			}
+		}
 		return balanceTracker{}
 	}
 	var t balanceTracker
@@ -156,7 +173,7 @@ func loadBalanceTracker() balanceTracker {
 
 func saveBalanceTracker(t balanceTracker) {
 	data, _ := json.Marshal(t)
-	os.WriteFile(balanceBaselinePath, data, 0644)
+	os.WriteFile(balanceBaselinePath(), data, 0644)
 }
 
 // === CC Switch proxy token data ===
