@@ -34,6 +34,7 @@ struct KeysSnapshot: Codable {
     let timestamp: String
     let refreshIntervalSec: Int
     let pollIntervalMs: Int
+    let monthlySalary: Double
 }
 
 struct KeyAction: Codable {
@@ -50,6 +51,7 @@ final class SettingsViewModel: ObservableObject {
     @Published var lastUpdate: Date?
     @Published var refreshIntervalSec: Int = 30
     @Published var pollIntervalMs: Int = 10
+    @Published var monthlySalary: Double = 0
 
     private var timer: Timer?
     private var hasLoadedSettings = false
@@ -77,6 +79,7 @@ final class SettingsViewModel: ObservableObject {
         if !hasLoadedSettings {
             refreshIntervalSec = snap.refreshIntervalSec
             pollIntervalMs = snap.pollIntervalMs
+            monthlySalary = snap.monthlySalary
             hasLoadedSettings = true
         }
         lastUpdate = Date()
@@ -113,6 +116,11 @@ final class SettingsViewModel: ObservableObject {
 
     func setPollInterval(ms: Int) {
         sendAction(KeyAction(action: "setPollInterval", id: nil, label: nil, key: String(ms)))
+    }
+
+    func setSalary(_ salary: Double) {
+        monthlySalary = salary
+        sendAction(KeyAction(action: "setSalary", id: nil, label: nil, key: String(salary)))
     }
 
     var activeKey: KeyDisplayInfo? {
@@ -640,12 +648,9 @@ struct ContentView: View {
             Divider()
                 .opacity(0.3)
 
-            VStack(spacing: 16) {
-                // Poll interval picker
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Poll Interval")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.secondary)
+            VStack(spacing: 0) {
+                // Poll interval
+                ConfigRow(label: "Poll Interval") {
                     Picker("", selection: Binding<Int>(
                         get: { viewModel.pollIntervalMs },
                         set: { viewModel.setPollInterval(ms: $0) }
@@ -656,16 +661,16 @@ struct ContentView: View {
                         Text("50ms").tag(50)
                     }
                     .pickerStyle(.menu)
-                    .font(.system(size: 12))
                     .labelsHidden()
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(width: 100, alignment: .trailing)
                 }
 
-                // Balance refresh interval picker
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Balance Refresh")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.secondary)
+                Divider()
+                    .opacity(0.2)
+                    .padding(.leading, 16)
+
+                // Balance refresh
+                ConfigRow(label: "Balance Refresh") {
                     Picker("", selection: Binding<Int>(
                         get: { viewModel.refreshIntervalSec },
                         set: { viewModel.setInterval(seconds: $0) }
@@ -677,16 +682,16 @@ struct ContentView: View {
                         Text("5m").tag(300)
                     }
                     .pickerStyle(.menu)
-                    .font(.system(size: 12))
                     .labelsHidden()
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(width: 100, alignment: .trailing)
                 }
 
-                // Skin picker
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Appearance")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.secondary)
+                Divider()
+                    .opacity(0.2)
+                    .padding(.leading, 16)
+
+                // Appearance
+                ConfigRow(label: "Appearance") {
                     Picker("", selection: Binding<String>(
                         get: { skinMode },
                         set: {
@@ -699,14 +704,52 @@ struct ContentView: View {
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
-                    .frame(maxWidth: 200, alignment: .leading)
+                    .frame(width: 140)
                 }
 
-                Spacer()
+                Divider()
+                    .opacity(0.2)
+                    .padding(.leading, 16)
+
+                // Monthly salary
+                ConfigRow(label: "Monthly Salary") {
+                    HStack(spacing: 4) {
+                        Text("CNY")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                        TextField("0", value: $viewModel.monthlySalary, format: .number)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 13, design: .monospaced))
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 100)
+                            .onSubmit {
+                                viewModel.setSalary(viewModel.monthlySalary)
+                            }
+                    }
+                }
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 16)
+
+            Spacer()
         }
+    }
+}
+
+// MARK: - Config row
+
+struct ConfigRow<Content: View>: View {
+    let label: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        HStack {
+            Text(label)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.primary)
+            Spacer()
+            content()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 }
 

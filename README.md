@@ -2,6 +2,28 @@
 
 macOS 菜单栏指示灯，通过 Claude Code hooks 实时显示 Claude 工作状态。Go + systray 实现，原生轻量。
 
+## 快速开始
+
+```bash
+# 构建并启动
+./scripts/build_and_launch.sh
+
+# 或直接启动已构建的 App
+open Novascope.app
+```
+
+## 文档
+
+所有项目文档位于 [`docs/`](./docs/) 目录：
+
+- **[docs/README.md](./docs/README.md)** — 项目概览、功能特性、目录结构、依赖
+- **[docs/architecture.md](./docs/architecture.md)** — 架构设计、设计模式、数据流、时序参数
+- **[docs/hooks.md](./docs/hooks.md)** — Claude Code Hook 格式、颜色映射、合并策略
+- **[docs/development.md](./docs/development.md)** — 开发环境、构建命令、调试方法、代码规范
+# Novascope
+
+macOS 菜单栏指示灯，通过 Claude Code hooks 实时显示 Claude 工作状态。Go + systray 实现，原生轻量。
+
 设计参考 [claude-traffic-light](https://github.com/TaylorSimery/claude-traffic-light)。
 
 ## 启动方式

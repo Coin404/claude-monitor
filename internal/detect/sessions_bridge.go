@@ -49,10 +49,12 @@ type ProviderUsage struct {
 
 // SessionsSnapshot is the JSON payload written to /tmp/claude-monitor-sessions.json.
 type SessionsSnapshot struct {
-	Sessions  []SessionInfo `json:"sessions"`
-	Timestamp string        `json:"timestamp"`
-	Count     int           `json:"count"`
-	Usage     *UsageSummary `json:"usage,omitempty"`
+	Sessions      []SessionInfo `json:"sessions"`
+	Timestamp     string        `json:"timestamp"`
+	Count         int           `json:"count"`
+	Usage         *UsageSummary `json:"usage,omitempty"`
+	EarnedToday   float64       `json:"earnedToday"`
+	MonthlySalary float64       `json:"monthlySalary"`
 }
 
 // WriteSessionsSnapshot collects session data from all running Claude
@@ -92,11 +94,17 @@ func WriteSessionsSnapshot() {
 		usage.UpdatedAt = time.Now().Format(time.RFC3339)
 	}
 
+	// Compute today's earnings from monthly salary
+	appSettings := settings.LoadAppSettings()
+	earnedToday, _ := settings.CalculateEarnedToday(appSettings.MonthlySalary)
+
 	snap := SessionsSnapshot{
-		Sessions:  infos,
-		Timestamp: time.Now().Format(time.RFC3339),
-		Count:     len(infos),
-		Usage:     usage,
+		Sessions:      infos,
+		Timestamp:     time.Now().Format(time.RFC3339),
+		Count:         len(infos),
+		Usage:         usage,
+		EarnedToday:   earnedToday,
+		MonthlySalary: appSettings.MonthlySalary,
 	}
 
 	var buf bytes.Buffer

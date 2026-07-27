@@ -34,6 +34,7 @@ type KeysSnapshot struct {
 	Timestamp          string           `json:"timestamp"`
 	RefreshIntervalSec int32            `json:"refreshIntervalSec"`
 	PollIntervalMs     int32            `json:"pollIntervalMs"`
+	MonthlySalary      float64          `json:"monthlySalary"`
 }
 
 // KeyAction represents an action requested by the SwiftUI settings window.
@@ -48,6 +49,7 @@ type KeyAction struct {
 // to /tmp/claude-monitor-keys.json for the SwiftUI settings window to consume.
 func WriteKeysSnapshot(refreshSec int32, pollMs int32) {
 	store := LoadKeys()
+	appSettings := LoadAppSettings()
 	infos := make([]KeyDisplayInfo, 0, len(store.Keys))
 	for _, e := range store.Keys {
 		infos = append(infos, KeyDisplayInfo{
@@ -70,6 +72,7 @@ func WriteKeysSnapshot(refreshSec int32, pollMs int32) {
 		Timestamp:          time.Now().Format(time.RFC3339),
 		RefreshIntervalSec: refreshSec,
 		PollIntervalMs:     pollMs,
+		MonthlySalary:      appSettings.MonthlySalary,
 	}
 
 	data, err := json.Marshal(snap)

@@ -21,8 +21,8 @@ import (
 	"claude-monitor/internal/settings"
 )
 
-var pollIntervalMs int32 = 10          // default 10ms, updated atomically
-var refreshIntervalSec int32 = 30      // default 30s, updated atomically
+var pollIntervalMs int32 = 10     // default 10ms, updated atomically
+var refreshIntervalSec int32 = 30 // default 30s, updated atomically
 
 var statusIcons map[core.Status][]byte
 
@@ -32,13 +32,13 @@ type sessionSlot struct {
 }
 
 var (
-	selectedPID     int             // 0 = monitor all sessions
-	sessionSlots    [10]sessionSlot // pre-allocated menu item slots
-	allSessionsItem *systray.MenuItem
-	lastNotifyTime  time.Time // debounce notifications
-	startupTime     time.Time // suppresses notification during startup grace period
-	panelHelperPID  int // PID of sessions panel helper (0 = not running)
-	settingsHelperPID int // PID of settings window helper (0 = not running)
+	selectedPID       int             // 0 = monitor all sessions
+	sessionSlots      [10]sessionSlot // pre-allocated menu item slots
+	allSessionsItem   *systray.MenuItem
+	lastNotifyTime    time.Time // debounce notifications
+	startupTime       time.Time // suppresses notification during startup grace period
+	panelHelperPID    int       // PID of sessions panel helper (0 = not running)
+	settingsHelperPID int       // PID of settings window helper (0 = not running)
 )
 
 func main() {
@@ -264,6 +264,12 @@ func onReady() {
 					s.PollIntervalMs = ms
 					_ = settings.SaveAppSettings(s)
 				}
+			case "setSalary":
+				if salary, err := strconv.ParseFloat(action.Key, 64); err == nil && salary >= 0 {
+					s := settings.LoadAppSettings()
+					s.MonthlySalary = salary
+					_ = settings.SaveAppSettings(s)
+				}
 			}
 		}
 	}()
@@ -317,20 +323,26 @@ func onReady() {
 }
 
 func onExit() {
-	// Kill the sessions panel helper if it's running
+	// Kill helper processes — use pkill by name for reliability,
+	// since PID tracking alone can miss processes on macOS.
+	_ = exec.Command("pkill", "-f", "novascope-panel-helper").Run()
+	_ = exec.Command("pkill", "-f", "novascope-settings-helper").Run()
+
+	// Also kill by tracked PID as a direct fallback
 	if panelHelperPID != 0 {
-		if p, err := os.FindProcess(panelHelperPID); err == nil {
-			_ = p.Kill()
-		}
+		_ = syscall.Kill(panelHelperPID, syscall.SIGTERM)
 		panelHelperPID = 0
 	}
-	// Kill the settings window helper if it's running
 	if settingsHelperPID != 0 {
-		if p, err := os.FindProcess(settingsHelperPID); err == nil {
-			_ = p.Kill()
-		}
+		_ = syscall.Kill(settingsHelperPID, syscall.SIGTERM)
 		settingsHelperPID = 0
 	}
+
+	// Clean up temp files
+	_ = os.Remove("/tmp/claude-monitor-sessions.json")
+	_ = os.Remove("/tmp/claude-monitor-keys.json")
+	_ = os.Remove("/tmp/claude-monitor-state")
+	_ = os.Remove("/tmp/claude-monitor-skin.json")
 }
 
 // sendNotification posts a macOS user notification via osascript.

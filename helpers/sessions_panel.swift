@@ -24,6 +24,8 @@ struct SessionsSnapshot: Codable {
     let timestamp: String
     let count: Int
     let usage: UsageSummary?
+    let earnedToday: Double
+    let monthlySalary: Double
 }
 
 // MARK: - Usage data model
@@ -54,6 +56,8 @@ struct ProviderUsage: Codable, Equatable, Identifiable {
 final class SessionsViewModel: ObservableObject {
     @Published var sessions: [SessionInfo] = []
     @Published var usage: UsageSummary?
+    @Published var earnedToday: Double = 0
+    @Published var monthlySalary: Double = 0
     @Published var lastUpdate: Date?
     @Published var isStale = false
     @Published var skinMode: String = loadSkinMode()
@@ -91,6 +95,12 @@ final class SessionsViewModel: ObservableObject {
         }
         if newUsage != usage {
             usage = newUsage
+        }
+        if snap.earnedToday != earnedToday {
+            earnedToday = snap.earnedToday
+        }
+        if snap.monthlySalary != monthlySalary {
+            monthlySalary = snap.monthlySalary
         }
         if !newSessions.isEmpty {
             hasEverHadSessions = true
@@ -342,6 +352,16 @@ private func formatTokens(_ tokens: Int64) -> String {
     }
 }
 
+private func formatEarnings(_ value: Double) -> String {
+    let n = NSNumber(value: value)
+    let formatter = NumberFormatter()
+    formatter.numberStyle = .currency
+    formatter.currencySymbol = "¥"
+    formatter.minimumFractionDigits = 4
+    formatter.maximumFractionDigits = 4
+    return formatter.string(from: n) ?? "¥0.00"
+}
+
 // MARK: - Footer
 
 struct FooterView: View {
@@ -428,6 +448,21 @@ struct ContentView: View {
                     UsageCard(usage: usage)
                 }
 
+                // Earnings display (only when salary is configured)
+                if viewModel.monthlySalary > 0 {
+                    Divider()
+                        .opacity(0.3)
+
+                    HStack {
+                        Spacer()
+                        Text(formatEarnings(viewModel.earnedToday))
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                }
+
                 Divider()
                     .opacity(0.3)
 
@@ -450,6 +485,9 @@ struct ContentView: View {
             resizeWindow()
         }
         .onReceive(viewModel.$usage) { _ in
+            resizeWindow()
+        }
+        .onReceive(viewModel.$earnedToday) { _ in
             resizeWindow()
         }
     }

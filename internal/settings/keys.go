@@ -18,17 +18,17 @@ import (
 
 // KeyEntry represents a single DeepSeek API key.
 type KeyEntry struct {
-	ID                  string  `json:"id"`
-	Label               string  `json:"label"`
-	Key                 string  `json:"key"`
-	Active              bool    `json:"active"`
-	Balance             float64 `json:"balance,omitempty"`
-	TodaySpending       float64 `json:"todaySpending,omitempty"`
-	Currency            string  `json:"currency,omitempty"`
-	Error               string  `json:"error,omitempty"`
-	CreatedAt           string  `json:"createdAt"`
-	Model               string  `json:"model,omitempty"`
-	CCSwitchProviderID  string  `json:"ccSwitchProviderId,omitempty"`
+	ID                 string  `json:"id"`
+	Label              string  `json:"label"`
+	Key                string  `json:"key"`
+	Active             bool    `json:"active"`
+	Balance            float64 `json:"balance,omitempty"`
+	TodaySpending      float64 `json:"todaySpending,omitempty"`
+	Currency           string  `json:"currency,omitempty"`
+	Error              string  `json:"error,omitempty"`
+	CreatedAt          string  `json:"createdAt"`
+	Model              string  `json:"model,omitempty"`
+	CCSwitchProviderID string  `json:"ccSwitchProviderId,omitempty"`
 }
 
 // KeyStore holds all managed API keys.
@@ -54,8 +54,9 @@ func settingsFilePath() string {
 
 // AppSettings holds application-level settings.
 type AppSettings struct {
-	RefreshIntervalSec int `json:"refreshIntervalSec"`
-	PollIntervalMs     int `json:"pollIntervalMs"`
+	RefreshIntervalSec int     `json:"refreshIntervalSec"`
+	PollIntervalMs     int     `json:"pollIntervalMs"`
+	MonthlySalary      float64 `json:"monthlySalary"`
 }
 
 // LoadAppSettings reads app settings from disk. Returns defaults if the file
