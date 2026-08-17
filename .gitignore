@@ -5,6 +5,9 @@ Novascope.app/Contents/MacOS/novascope-stats-helper
 Novascope.app/Contents/MacOS/novascope-panel-helper
 Novascope.app/Contents/MacOS/novascope-settings-helper
 
+# Generated Info.plist (source is in scripts/make_dist.sh)
+Novascope.app/Contents/Info.plist
+
 # Code signature
 Novascope.app/Contents/_CodeSignature/
 
